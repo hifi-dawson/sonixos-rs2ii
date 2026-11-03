@@ -11,6 +11,9 @@
 #include "src/system/device/led.h"
 #include "src/system/device/power.h"
 #include "src/system/device/system.h"
+#include "src/system/device/sysinfo.h"
+#include "src/system/input/keymap.h"
+#include "src/gui/shell/switcher.h"
 
 lv_obj_t *powersettings_screen;
 
@@ -97,6 +100,8 @@ static void set_checked(lv_obj_t *sw, bool on) {
 	}
 }
 
+static unsigned screen_off_mask(void);
+
 void powersettings_apply(void) {
 	if (axpcharge_applies()) {
 		// The R1 has no percentage slider: a percentage limit saved on it
@@ -127,6 +132,7 @@ void powersettings_apply(void) {
 	led_set_idle_off(config_get_bool("power", "led_off_standby", true));
 
 	input_set_key_lock(config_get_bool("power", "lock_keys_screen_off", false));
+	input_set_screen_off_buttons(screen_off_mask());
 }
 
 static void refresh_labels(void) {
@@ -241,6 +247,84 @@ static void led_on_toggled_cb(lv_event_t *e) {
 	refresh_labels();
 }
 
+// ---------------------------------------------------------------------------
+// Buttons with the screen off
+//
+// One switch per button on the case, saved under [keys] as screen_off_<name>,
+// on until switched off. The volume is one switch for both directions: a
+// wheel, or a rocker, is one control. The mask they add up to goes to the
+// button thread (input_set_screen_off_buttons).
+// ---------------------------------------------------------------------------
+
+static lv_obj_t *screen_off_screen;
+
+typedef struct {
+	const char *key; // config key under [keys]
+	unsigned mask;	 // the buttons the switch stands for
+	lv_obj_t *sw;
+} screen_off_row_t;
+
+static screen_off_row_t screen_off_rows[] = {
+	{"screen_off_prev", 1u << KEYMAP_BTN_PREV, NULL},
+	{"screen_off_play", 1u << KEYMAP_BTN_PLAY, NULL},
+	{"screen_off_next", 1u << KEYMAP_BTN_NEXT, NULL},
+	{"screen_off_volume", (1u << KEYMAP_BTN_VOL_UP) | (1u << KEYMAP_BTN_VOL_DOWN), NULL},
+	{"screen_off_fn", (1u << KEYMAP_BTN_FN) | (1u << KEYMAP_BTN_FN_LONG), NULL},
+};
+#define SCREEN_OFF_ROW_COUNT (sizeof(screen_off_rows) / sizeof(screen_off_rows[0]))
+
+static unsigned screen_off_mask(void) {
+	unsigned mask = ~0u;
+	for (size_t i = 0; i < SCREEN_OFF_ROW_COUNT; i++) {
+		if (!config_get_bool("keys", screen_off_rows[i].key, true)) {
+			mask &= ~screen_off_rows[i].mask;
+		}
+	}
+	return mask;
+}
+
+static void screen_off_toggled_cb(lv_event_t *e) {
+	screen_off_row_t *row = lv_event_get_user_data(e);
+	config_set_bool("keys", row->key, lv_obj_has_state(row->sw, LV_STATE_CHECKED));
+	config_save();
+	input_set_screen_off_buttons(screen_off_mask());
+}
+
+static void build_screen_off_page(gui_config_t *cfg) {
+	const sysinfo_model_t *model = sysinfo_model();
+	if (!model) {
+		model = sysinfo_model_by_panel(cfg->screen_width, cfg->screen_height);
+	}
+
+	screen_off_screen = lv_obj_create(NULL);
+	lv_obj_t *container = settingsrow_page(screen_off_screen, cfg, "power_screen_off_buttons");
+
+	lv_obj_t *note = lv_label_create(container);
+	lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+	lv_obj_set_width(note, lv_pct(100));
+	lv_obj_add_style(note, &theme_style_text_dim, 0);
+	lv_obj_set_style_text_font(note, &font_ui_22, 0);
+	lv_label_set_text(note, tr("power_screen_off_buttons_note"));
+
+	// Named as the remap page names them; the volume by what the model has.
+	static const char *const NAMES[SCREEN_OFF_ROW_COUNT] = {
+		"remap_button_prev", "remap_button_play", "remap_button_next", "remap_button_volume_keys", "remap_button_fn",
+	};
+	for (size_t i = 0; i < SCREEN_OFF_ROW_COUNT; i++) {
+		screen_off_row_t *row = &screen_off_rows[i];
+		if ((row->mask & (1u << KEYMAP_BTN_FN)) && !(model && model->fn_key)) {
+			continue;
+		}
+		const char *name = NAMES[i];
+		if ((row->mask & (1u << KEYMAP_BTN_VOL_UP)) && model && model->volume_wheel) {
+			name = "remap_button_volume_wheel";
+		}
+		settingsrow_toggle(container, name, &row->sw, NULL);
+		lv_obj_add_event_cb(row->sw, screen_off_toggled_cb, LV_EVENT_VALUE_CHANGED, row);
+		set_checked(row->sw, config_get_bool("keys", row->key, true));
+	}
+}
+
 static void key_lock_toggled_cb(lv_event_t *e) {
 	(void)e;
 	config_set_bool("power", "lock_keys_screen_off", lv_obj_has_state(key_lock_switch, LV_STATE_CHECKED));
@@ -327,6 +411,11 @@ void powersettings_init(gui_config_t *cfg) {
 	lv_obj_add_style(key_lock_note, &theme_style_text_dim, 0);
 	lv_obj_set_style_text_font(key_lock_note, &font_ui_22, 0);
 	lv_label_set_text(key_lock_note, tr("power_lock_keys_screen_off_note"));
+
+	// And which buttons work at all with the screen off, on a page of their
+	// own.
+	build_screen_off_page(cfg);
+	settingsrow_add(container, "power_screen_off_buttons", NULL, switch_screen_cb, screen_off_screen);
 
 	// Toggle and "after how long" on one card: the slider is only there while
 	// the option is on.

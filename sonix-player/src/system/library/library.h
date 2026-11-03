@@ -55,6 +55,13 @@ void library_scan_folders_set(const char *const *names, int count);
 // run in progress is stopped first: the scan does everything it would.
 bool library_scan_start(const char *root);
 
+// Empties the index -- the tracks and everything filed from them, as a scan
+// does before it reads the card -- and leaves it open and empty for a scan to
+// fill again. Favourites, play counts, the play history and the playlists are
+// the person's own and stay. False while a scan is running, when there is no
+// index, or when the database would not do it (then it is as it was).
+bool library_clear(void);
+
 // "Detect changes": at startup and whenever the card comes back -- put in
 // again, returned by a computer, or left by the Wi-Fi transfer -- the index is
 // brought up to date without emptying it. The folders chosen for the scan are walked, and only a
@@ -76,6 +83,20 @@ bool library_detect_changes_chosen(void);
 // so the run takes longer. On by default, [library] detect_retagged.
 bool library_detect_retagged(void);
 void library_set_detect_retagged(bool on);
+
+// Detect changes now, as library_card_returned() runs it with the setting on:
+// for a run somebody asks for, whatever the setting says of the automatic ones.
+// False when a scan is running, the index is not open or nothing was indexed.
+bool library_detect_changes_now(const char *root);
+
+// Reads folders again from scratch, at any depth under `root` and named by
+// their full paths: every file in them, indexed or not, is read anew, what is
+// no longer there is taken out (a folder that is gone with everything under
+// it), and the rest of the index is left as it is. A Detect changes run kept to
+// those folders that takes every file in them for changed, and told the same
+// way: LOOKING, ADDING, then FINISHED or STOPPED. False when a scan is running,
+// the index is not open, nothing was indexed or there are no folders.
+bool library_rescan_folders(const char *root, const char *const *folders, int count);
 
 // ---------------------------------------------------------------------------
 // How the index files tracks

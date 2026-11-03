@@ -18,6 +18,20 @@ int detect_output(void); // the "Output Port Switch" value for what is plugged i
 // goes to the chip by another way. See alsa-controls.c.
 bool alsa_board_is_cs43131(void);
 
+// True on the RS2 II's audio board: Darwin, an R2R ladder behind the HM200
+// FPGA, with an NJU72315 for the volume. No codec, so no DRE, NOS or digital
+// filter here (darwin.h has the converter's own), and no balanced line-out
+// flag. See alsa-controls.c.
+bool alsa_board_is_darwin(void);
+
+// The volume as the player shows it. Inside, the volume is 0..100 everywhere,
+// and on the Cirrus boards that is the number on the screen. The RS2 II's
+// stock player counts 0..50 and writes that number to the card, so on Darwin
+// the screen shows half the index, a key moves it by two, and the card gets
+// the shown number: the same numbers, steps and loudness as stock.
+int volume_shown(int percent);
+int volume_step_scale(void);
+
 // The route on the OTHER physical socket, where the route is parked before a
 // suspend. Routes 1 and 2 are the two faces of the 3.5 mm one and the driver
 // runs nothing between them, so a partner picked by "any different number"

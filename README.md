@@ -1,11 +1,116 @@
 ﻿# Sonix Player
 
+> **This is an unofficial port of SonixOS (Sonix Player) to the HiBy RS2 II, based on version 1.3.0.** To be exact, it's built on upstream commit `3f72a85`, 5 commits after the 1.3.0 release. It isn't part of the [upstream project](https://github.com/Jepl4r/sonix-player), so please report RS2 II problems here rather than there.
+>
+> **It's provided as is, with no warranty of any kind.** Flashing replaces your player's firmware, and you do it at your own risk.
+
 A replacement player for the **HiBy R3 Pro II** and the **HiBy R1**, written on
-LVGL.
+LVGL, and here for the **HiBy RS2 II** as well.
 
 Everything it can do is in **[FEATURES.md](FEATURES.md)**.
 
-## Install
+## HiBy RS2 II
+
+This port adds the RS2 II: Ingenic X1600E, 480x800 Sitronix panel, Darwin III R2R converter (an HM200 FPGA driving the ladder) and an NJU72315 volume chip. The player has no Wi-Fi or Bluetooth. It has been tested on one player.
+
+### Install
+
+1. Download `rs2ii.upt` from the **[latest release](https://github.com/hifi-dawson/sonixos-rs2ii/releases/latest)**. It's for the RS2 II only: the update doesn't check which player it's given.
+2. Charge the player above 30%.
+3. Copy `rs2ii.upt` to the root of the microSD card, and put the card in the player.
+4. In HiBy's settings, open **Firmware update** and choose to update from the card.
+5. Let it finish. It restarts by itself.
+
+The first time SonixOS starts, it clears HiBy's own settings and library database from the player. Your music on the card isn't touched. Later updates keep SonixOS's settings.
+
+This route has been run from stock firmware version 1.2.
+
+### If the stock update isn't an option
+
+Copy `rs2ii.upt` to the card as above, and power the player off. Hold the button directly under the volume knob, then press the power knob, and keep holding until the update starts.
+
+Holding that button at power-on reflashes from `rs2ii.upt` whenever that file is on the card, so don't hold it at power-on unless you mean to.
+
+This route has been run on a player already on this firmware. The bootloader reads the button, and the firmware doesn't change the bootloader, so it should work the same from stock, but that exact case hasn't been tried.
+
+### Updating later
+
+Settings > System > Update firmware > From SD card should update from inside the player, though that hasn't been tried on the RS2 II yet. There is no online update, as the player has no network.
+
+### Going back to stock
+
+Flash HiBy's original RS2 II firmware, with the file named `rs2ii.upt`. This has been done using the same recovery system, starting from this port.
+
+### If it won't start
+
+- Holding the power knob for about 15 seconds cuts the power in hardware, so a frozen player can always be switched off.
+- The recovery button above doesn't need the firmware to be working, as long as a good `rs2ii.upt` is on the card.
+
+### Build it yourself
+
+Build on Linux from a checkout with LF line endings. An image packed from a Windows checkout with CRLF scripts won't boot.
+
+Besides the packages listed further down, the toolchain needs `libtool-bin gtk-doc-tools gettext autoconf automake xz-utils bzip2 patch texinfo libgmp-dev libmpfr-dev libmpc-dev`.
+
+```bash
+cd sonix-player
+make target -j$(nproc)
+cp sonix_player sonix_launch ../sonix-packer/
+```
+
+Put HiBy's stock firmware next to the packer as `rs2ii_original.upt`, then:
+
+```bash
+cd ../sonix-packer
+bash sonix_firmware_packer.sh
+```
+
+That writes `rs2ii.upt`.
+
+### What's different from upstream
+
+Needed for the RS2 II:
+
+- **Model entry and packing:** a "HiBy RS2 II" model and a packer entry that builds `rs2ii.upt`.
+- **HiBy's kernel and modules:** the other models ship Sonix's own kernel and modules. This one keeps HiBy's, because HiBy's sound card module loads the Darwin FPGA.
+- **Darwin audio:** the volume runs 0 to 50 as on stock, with three gain positions and four DSD gain positions.
+- **Darwin page and tile:** the 11 digital filters, NOS and the harmonic controller. They're reapplied after standby. The gain circle in the control centre goes round Darwin's three positions.
+- **Volume knob:** read as volume up and down.
+- **Side buttons:** previous, play and next going down from the knob, the same as HiBy's stock firmware.
+- **No network:** Streaming, Wireless, Last.fm, the network circles in the control centre, automatic time, online update, the Bluetooth log and online lyrics are hidden.
+- **Remap page:** a picture and layout for this player's right side.
+
+The Darwin tile icon and the remap picture are HiBy's own artwork.
+
+Added features, on every model unless noted:
+
+- **Home screen editor:** choose and order up to five tiles, with the rest under More. Settings > Appearance > Home screen.
+- **Theme packs:** Classic, which is the default and matches upstream, Midnight, and your own from the card as `Themes/<name>.ini`. Settings > Appearance > Theme pack.
+- **Albums of an artist by year or name:** by year, oldest first, is the default, which differs from upstream. Music settings > Library.
+- **Fn key:** two remappable actions, on models with the key. Remap buttons also gains new actions for any button: lock the buttons, screen off, Home, Queue, Now Playing, and on the RS2 II the Darwin page, next filter, NOS and harmonics.
+- **Buttons with the screen off:** a switch per button. Settings > Power.
+- **Clear the queue:** tap the bin on the queue page with nothing selected.
+- **Home and Queue circles** for the control centre.
+- **Podcasts from the card:** on a player with no network, a Podcasts tile reads a `Podcasts` folder on the card, with one folder per show.
+- **Second card slot:** Settings > System says what's in the RS2 II's second slot. Nothing mounts it yet.
+- **Faster Detect changes:** about 19 s down to about 10 s on an 11,000-track card.
+
+### Known issues on the RS2 II
+
+- **USB DAC mode:** it forces a USB reconnect, after which Windows finds the device but no audio format.
+- **Clock:** with no network, it doesn't follow daylight saving by itself. When the clocks change, switch between Standard time and Daylight saving in Settings > Date and time.
+- **Fn key:** it's written as a press-and-hold button, but on the RS2 II it's a slider that stays where it's left, so it may not behave as the page suggests.
+- **DSD Gain:** what positions 1 to 3 do is still unknown, so the Darwin page just numbers them.
+- **Serial number:** the `RS2II` prefix shown in About is a guess, not checked against the box.
+- **Translations:** the strings for the new features are in English in every language.
+- **Game Boy:** it's included as upstream has it, but hasn't been tried with a game on the RS2 II.
+- **Upstream:** newer upstream commits, including the redesigned graphic EQ and bit-perfect mode, aren't merged yet.
+
+ADB is off by default, as upstream has it. Turn it on in the developer options if you need it.
+
+## Install on the R3 Pro II and the R1
+
+These steps and the releases they link to are upstream's, and don't include this port's changes.
 
 1. Download the firmware for your player from the
    **[latest release](https://github.com/Jepl4r/sonix-player/releases/latest)**:
@@ -33,22 +138,22 @@ right file from the latest release by itself.
 
 ## Supported players
 
-One binary runs on both. It reads which player it is on from
+One binary runs on all three. It reads which player it is on from
 `system-info.json` at startup, and the firmware packer writes a different one
 into each image.
 
-| | HiBy R3 Pro II | HiBy R1 |
-|---|---|---|
-| panel | 480x720 | 480x800 |
-| DAC | two Cirrus Logic CS43198 | one Cirrus Logic CS43131 |
-| headphone outputs | 3.5 mm, 4.4 mm balanced | 3.5 mm |
-| DAC controls | digital filters, DRE, NOS | digital filters, NOS |
-| touch | Goodix gt9xx, open-source driver, five fingers | Hynitron CST8xx, open-source driver, two fingers |
-| charger | MP2731 | the AXP2101 PMIC |
-| kernel | custom 4.4.94, see [hiby-custom-kernel](https://github.com/Jepl4r/hiby-custom-kernel) | the same |
-| double tap to wake | yes | no |
-| buttons | volume on the left flank, playback on the right | all on the right flank, one skip key |
-| firmware image | `r3proii.upt` | `r1.upt` |
+| | HiBy R3 Pro II | HiBy R1 | HiBy RS2 II |
+|---|---|---|---|
+| panel | 480x720 | 480x800 | 480x800 |
+| DAC | two Cirrus Logic CS43198 | one Cirrus Logic CS43131 | Darwin III R2R (HM200 FPGA), NJU72315 volume |
+| headphone outputs | 3.5 mm, 4.4 mm balanced | 3.5 mm | 3.5 mm, 4.4 mm balanced |
+| DAC controls | digital filters, DRE, NOS | digital filters, NOS | 11 digital filters, NOS, harmonic controller |
+| touch | Goodix gt9xx, open-source driver, five fingers | Hynitron CST8xx, open-source driver, two fingers | Sitronix, HiBy's stock driver |
+| charger | MP2731 | the AXP2101 PMIC | the AXP2101 PMIC |
+| kernel | custom 4.4.94, see [hiby-custom-kernel](https://github.com/Jepl4r/hiby-custom-kernel) | the same | HiBy's stock 4.4.94 |
+| double tap to wake | yes | no | no |
+| buttons | volume on the left flank, playback on the right | all on the right flank, one skip key | volume knob and playback on the right flank, Fn slider on top |
+| firmware image | `r3proii.upt` | `r1.upt` | `rs2ii.upt` |
 
 Each player only looks for its own image, and never offers the other's: the
 recovery system does not check what it is given.

@@ -38,13 +38,21 @@ static http_stream_t *active_stream; // guarded by `lock`; NULL outside the body
 
 static char root[512];
 
+// "Podcasts" when the card has that folder, the name people make by hand;
+// otherwise PODCASTDL_FOLDER, the one the downloads have always used. Looked
+// up every time, since folders come and go with the card.
 const char *podcastdl_root(void) {
 	const char *sd = storage_sd_root();
 	if (!sd || !sd[0]) {
 		root[0] = '\0';
-	} else {
-		snprintf(root, sizeof(root), "%.480s/%s", sd, PODCASTDL_FOLDER);
+		return root;
 	}
+	snprintf(root, sizeof(root), "%.480s/%s", sd, PODCASTDL_FOLDER_PLURAL);
+	struct stat st;
+	if (stat(root, &st) == 0 && S_ISDIR(st.st_mode)) {
+		return root;
+	}
+	snprintf(root, sizeof(root), "%.480s/%s", sd, PODCASTDL_FOLDER);
 	return root;
 }
 

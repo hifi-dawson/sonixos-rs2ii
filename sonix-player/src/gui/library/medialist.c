@@ -487,6 +487,21 @@ bool medialist_quality_badges(void) {
 	return quality_badges;
 }
 
+// How one artist's records are listed (medialist.h). By year unless the
+// Library page says otherwise.
+static medialist_artist_album_order_t artist_album_order = MEDIALIST_ARTIST_ALBUMS_YEAR;
+
+medialist_artist_album_order_t medialist_artist_album_order(void) { return artist_album_order; }
+
+void medialist_set_artist_album_order(medialist_artist_album_order_t order) {
+	if (order < 0 || order >= MEDIALIST_ARTIST_ALBUMS_ORDER_COUNT) {
+		return;
+	}
+	artist_album_order = order;
+	config_set_int("library", "artist_album_order", order);
+	config_save();
+}
+
 static bool sort_is_desc(library_list_t kind) { return (sort_desc_mask & (1u << (unsigned)kind)) != 0; }
 
 static void sort_set_desc(library_list_t kind, bool desc) {
@@ -546,6 +561,28 @@ static bool sort_can_year(library_list_t kind, library_filter_t filter) {
 // database runs it either way itself, so the rows without a year stay at the
 // end in both.
 static void sort_order_for(library_list_t kind, library_filter_t filter, library_order_t *order, bool *desc) {
+	// One artist's records go by the Library setting, not by the Albums list's
+	// own sort: a discography is read by year, the whole shelf by name.
+	if (kind == LIBRARY_LIST_ALBUMS && (filter == LIBRARY_FILTER_ARTIST || filter == LIBRARY_FILTER_ALBUM_ARTIST)) {
+		switch (artist_album_order) {
+		case MEDIALIST_ARTIST_ALBUMS_YEAR_DESC:
+			*order = LIBRARY_ORDER_YEAR_DESC;
+			*desc = false;
+			return;
+		case MEDIALIST_ARTIST_ALBUMS_NAME:
+			*order = LIBRARY_ORDER_DEFAULT;
+			*desc = false;
+			return;
+		case MEDIALIST_ARTIST_ALBUMS_NAME_DESC:
+			*order = LIBRARY_ORDER_DEFAULT;
+			*desc = true;
+			return;
+		default:
+			*order = LIBRARY_ORDER_YEAR;
+			*desc = false;
+			return;
+		}
+	}
 	bool reversed = sort_is_desc(kind);
 	if (sort_can_year(kind, filter) && sort_is_year(kind)) {
 		*order = reversed ? LIBRARY_ORDER_YEAR_DESC : LIBRARY_ORDER_YEAR;
@@ -5193,6 +5230,10 @@ void medialist_init(gui_config_t *cfg) {
 	sort_desc_mask = (unsigned)config_get_int("library", "sort_desc", 0);
 	sort_added_mask = (unsigned)config_get_int("library", "sort_added", 0);
 	sort_year_mask = (unsigned)config_get_int("library", "sort_year", 0);
+	long saved_album_order = config_get_int("library", "artist_album_order", MEDIALIST_ARTIST_ALBUMS_YEAR);
+	artist_album_order = saved_album_order >= 0 && saved_album_order < MEDIALIST_ARTIST_ALBUMS_ORDER_COUNT
+							 ? (medialist_artist_album_order_t)saved_album_order
+							 : MEDIALIST_ARTIST_ALBUMS_YEAR;
 	artist_records = config_get_int("library", "artist_records", 0) != 0;
 	load_view_settings();
 	fav_reversed = config_get_int("library", "fav_reversed", 0) != 0;

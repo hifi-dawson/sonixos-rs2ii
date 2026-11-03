@@ -35,6 +35,13 @@ typedef enum {
 	KEYMAP_BTN_VOL_UP,
 	KEYMAP_BTN_VOL_DOWN,
 
+	// The RS2 II's Fn key, on the models that have one (sysinfo's fn_key):
+	// a short press and a long press, each with an action of its own, the
+	// way the stock player has it. Two entries here so that the table, the
+	// config and the remap page treat them like any other button.
+	KEYMAP_BTN_FN,
+	KEYMAP_BTN_FN_LONG,
+
 	KEYMAP_BTN_COUNT,
 } keymap_button_t;
 
@@ -45,6 +52,17 @@ typedef enum {
 	KEYMAP_ACTION_NEXT,
 	KEYMAP_ACTION_VOLUME_UP,
 	KEYMAP_ACTION_VOLUME_DOWN,
+	// What a shortcut key is for: things that otherwise take a trip through
+	// the pages. The first two act in system.c, the rest on the GUI thread.
+	KEYMAP_ACTION_LOCK_KEYS,	  // the buttons off until pressed again (the Fn key stays live)
+	KEYMAP_ACTION_SCREEN_OFF,
+	KEYMAP_ACTION_HOME,
+	KEYMAP_ACTION_QUEUE,
+	KEYMAP_ACTION_NOW_PLAYING,
+	KEYMAP_ACTION_DARWIN,		  // the Darwin page
+	KEYMAP_ACTION_DARWIN_FILTER, // the next Darwin filter, round the list
+	KEYMAP_ACTION_NOS,			  // NOS on or off
+	KEYMAP_ACTION_HARMONIC,		  // the harmonic controller on or off
 	KEYMAP_ACTION_COUNT,
 } keymap_action_t;
 

@@ -33,6 +33,19 @@ void medialist_init(gui_config_t *cfg);
 bool medialist_album_view(void);
 void medialist_set_album_view(bool on);
 
+// The order of one artist's (or album artist's) records: by year, the way a
+// discography reads, unless Music > Library says by name. Saved to config.
+typedef enum {
+	MEDIALIST_ARTIST_ALBUMS_YEAR = 0,
+	MEDIALIST_ARTIST_ALBUMS_YEAR_DESC,
+	MEDIALIST_ARTIST_ALBUMS_NAME,
+	MEDIALIST_ARTIST_ALBUMS_NAME_DESC,
+	MEDIALIST_ARTIST_ALBUMS_ORDER_COUNT,
+} medialist_artist_album_order_t;
+
+medialist_artist_album_order_t medialist_artist_album_order(void);
+void medialist_set_artist_album_order(medialist_artist_album_order_t order);
+
 // "Alternative album view": an album's tracks open under a head with its
 // cover, title, artist, genre and year and three buttons -- shuffle, play and a
 // track into the queue, circle-play's choices -- which scrolls away with the

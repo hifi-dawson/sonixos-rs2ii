@@ -256,7 +256,7 @@ void topbar_refresh_volume(int percent) {
 		percent = 100;
 	}
 
-	lv_label_set_text_fmt(vol_label, "%d", percent);
+	lv_label_set_text_fmt(vol_label, "%d", volume_shown(percent));
 
 	// Past this threshold the number turns red, warning that the next steps are
 	// the loud ones. The volume pop-up uses the same threshold.

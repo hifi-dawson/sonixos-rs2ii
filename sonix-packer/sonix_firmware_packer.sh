@@ -8,7 +8,8 @@
 #   sonix_firmware_packer.sh   this script
 #   r3proii_original.upt       the stock firmware of the R3 Pro II
 #   r1_original.upt            the stock firmware of the R1
-#   sonix_player               the binary to install, the same one for both
+#   rs2ii_original.upt         the stock firmware of the RS2 II
+#   sonix_player               the binary to install, the same one for all
 #   sonix_launch               waits for the player and reboots when it exits
 #                              (optional: without it the launcher's shell does)
 #   kernel/xImage-R3PII        a kernel to install instead of the stock one
@@ -17,10 +18,18 @@
 #   assets/
 #       R3PII/
 #       R1/
+#       RS2II/
 #       |
 #       v
 #   r3proii.upt                one result per stock firmware present
 #   r1.upt
+#   rs2ii.upt
+#
+# The RS2 II keeps its stock kernel and every stock module: assets/RS2II has no
+# module_driver/ and kernel/ has no xImage-RS2II. Its Darwin FPGA is programmed
+# by HiBy's own sound-card module, and the filters it loads stay in
+# usr/resource/filter, which step 6 leaves alone. Its stock Wi-Fi and Bluetooth
+# scripts stay as well: Sonix's are written for the brcmfmac kernel above.
 #
 # A model whose stock firmware is not here is skipped with a warning, so
 # somebody who owns one of the two players can still run this and get theirs.
@@ -76,6 +85,7 @@ KERNEL_DIR="$SCRIPT_DIR/kernel"
 MODELS=(
 	"R3PII|r3proii_original.upt|r3proii.upt|HiBy R3 Pro II"
 	"R1|r1_original.upt|r1.upt|HiBy R1"
+	"RS2II|rs2ii_original.upt|rs2ii.upt|HiBy RS2 II"
 )
 
 WORK_DIR="$SCRIPT_DIR/temp"
@@ -268,7 +278,7 @@ for entry in "${MODELS[@]}"; do
 done
 
 [ -n "$BUILDABLE" ] || die "no stock firmware to start from. Put at least one of
-  r3proii_original.upt / r1_original.upt next to this script."
+  r3proii_original.upt / r1_original.upt / rs2ii_original.upt next to this script."
 
 BUILD_STAMP="$(get_stamp "$PLAYER_BIN")"
 TODAY="$(date +%d%m%Y)"

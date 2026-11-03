@@ -655,6 +655,14 @@ static void sd_clicked(void) {
 
 static void show_choice(void) {
 	layout(tr("system_update_firmware"), NULL, false, false);
+	// Without a radio the card is the only way an update arrives.
+	const sysinfo_model_t *model = sysinfo_model();
+	if (model && model->no_wireless) {
+		set_button(0, "system_update_from_sd", true, sd_clicked);
+		set_button(1, "cancel", false, close_card);
+		hide_buttons(2);
+		return;
+	}
 	set_button(0, "system_update_online", true, online_clicked);
 	set_button(1, "system_update_from_sd", false, sd_clicked);
 	set_button(2, "cancel", false, close_card);

@@ -12,7 +12,6 @@
 #include "lvgl/lvgl.h"
 
 #include "src/gui/fonts/fonts.h"
-#include "src/gui/shell/popover.h"
 #include "src/gui/shell/settingsrow.h"
 #include "src/gui/shell/switcher.h"
 #include "src/gui/shell/theme.h"
@@ -92,6 +91,21 @@ static const hit_t R1_HITS[] = {
 	{KEYMAP_BTN_VOL_DOWN, 254, 64},
 	{KEYMAP_BTN_PLAY, 360, 66},
 	{KEYMAP_BTN_NEXT, 426, 67},
+};
+
+// The RS2 II's one flank, top to bottom: the volume knob, which is also the
+// power button, then previous, play/pause and next. The knob is one control
+// that turns both ways, so it carries two zones, its upper and lower half,
+// for the two directions. The Fn key is on the top edge, out of the picture;
+// its rows go under the last button's. The photo is HiBy's own render of the
+// gold unit at twice its size, cut to the flank (180 x 660), the same file
+// for both themes.
+static const hit_t RS2II_HITS[] = {
+	{KEYMAP_BTN_VOL_UP, 52, 46},
+	{KEYMAP_BTN_VOL_DOWN, 98, 46},
+	{KEYMAP_BTN_PREV, 198, 44},
+	{KEYMAP_BTN_PLAY, 254, 44},
+	{KEYMAP_BTN_NEXT, 308, 44},
 };
 
 // How wide the touch zone over a flank is: the buttons sit on its outer edge,
@@ -237,10 +251,17 @@ static void photos_free(void) {
 // choosing an action
 // ---------------------------------------------------------------------------
 
-// The button whose action is being chosen. The popover passes a single value to
-// the callback and that carries the action, so the button has to be remembered
-// here from the touch that opened it.
+// The button whose action is being chosen, remembered from the touch that
+// opened the dialog: the pills carry the action alone.
 static keymap_button_t choosing = KEYMAP_BTN_COUNT;
+
+// The chooser: a card of pills, one per action, headed by the button's name.
+// A dialog rather than the popover menu, which holds seven entries, because
+// the actions are more than twice that once the shortcuts are among them.
+static lv_obj_t *pick_veil;
+static lv_obj_t *pick_title;
+static lv_obj_t *pick_pills[KEYMAP_ACTION_COUNT];
+static lv_obj_t *pick_done;
 
 // The rows' size: the largest of row_font and the two sizes under it at which
 // every row's action fits across, all rows alike so the column reads as one
@@ -282,7 +303,8 @@ static void refresh_values(void) {
 
 // The buttons by the names they carry on the case.
 static const char *const BUTTON_NAMES[KEYMAP_BTN_COUNT] = {
-	"remap_button_prev", "remap_button_play", "remap_button_next", "remap_button_vol_up", "remap_button_vol_down",
+	"remap_button_prev",   "remap_button_play", "remap_button_next",	"remap_button_vol_up",
+	"remap_button_vol_down", "remap_button_fn",	"remap_button_fn_long",
 };
 
 static void refresh_double(void) {
@@ -450,6 +472,49 @@ static void build_double_dialog(gui_config_t *cfg, const hit_t *hits, int hit_co
 	lv_obj_center(done_label);
 }
 
+static void pick_clicked_cb(lv_event_t *e);
+
+// The Fn key's two rows, on the models that have one: a press and a hold,
+// named on the left, each row the same chooser as a photographed button's.
+// Under the photos, where the layout leaves room; the RS2 II's own picture,
+// when it comes, will put them beside the key.
+static void build_fn_rows(gui_config_t *cfg, int x, int y, int w) {
+	static const keymap_button_t FN[] = {KEYMAP_BTN_FN, KEYMAP_BTN_FN_LONG};
+	for (size_t i = 0; i < sizeof(FN) / sizeof(FN[0]); i++) {
+		keymap_button_t button = FN[i];
+		lv_obj_t *row = lv_btn_create(remap_screen);
+		rows[button] = row;
+		lv_obj_set_pos(row, x, y + (int)i * (row_h + 6));
+		lv_obj_set_size(row, w, row_h);
+		lv_obj_add_style(row, &theme_style_card, 0);
+		lv_obj_add_style(row, &theme_style_card_pressed, LV_STATE_PRESSED);
+		lv_obj_set_style_radius(row, 10, 0);
+		lv_obj_set_style_border_width(row, 0, 0);
+		lv_obj_set_style_shadow_width(row, 0, 0);
+		lv_obj_set_style_pad_hor(row, 14, 0);
+		lv_obj_set_scrollable(row, false);
+		lv_obj_add_event_cb(row, pick_clicked_cb, LV_EVENT_CLICKED, (void *)(intptr_t)button);
+
+		lv_obj_t *name = lv_label_create(row);
+		lv_label_set_text(name, tr(BUTTON_NAMES[button]));
+		lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+		lv_obj_set_width(name, 84);
+		lv_obj_add_style(name, &theme_style_text_dim, 0);
+		lv_obj_set_style_text_font(name, row_font, 0);
+		lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, 0);
+
+		lv_obj_t *value = lv_label_create(row);
+		value_labels[button] = value;
+		lv_label_set_long_mode(value, LV_LABEL_LONG_DOT);
+		lv_obj_set_width(value, w - 28 - 90);
+		lv_obj_set_height(value, lv_font_get_line_height(row_font));
+		lv_obj_add_style(value, &theme_style_text, 0);
+		lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+		lv_obj_align(value, LV_ALIGN_RIGHT_MID, 0, 0);
+	}
+	(void)cfg;
+}
+
 // The row, in the free space under the last button's row.
 static void build_double_row(gui_config_t *cfg, int x, int y, int w) {
 	lv_obj_t *row = lv_btn_create(remap_screen);
@@ -482,39 +547,101 @@ static void build_double_row(gui_config_t *cfg, int x, int y, int w) {
 	(void)cfg;
 }
 
-static void picked(void *user) {
-	keymap_action_t action = (keymap_action_t)(intptr_t)user;
+static void refresh_pick(void) {
+	if (!pick_veil || choosing >= KEYMAP_BTN_COUNT) {
+		return;
+	}
+	lv_label_set_text(pick_title, tr(BUTTON_NAMES[choosing]));
+	keymap_action_t current = keymap_get(choosing);
+	for (int i = 0; i < KEYMAP_ACTION_COUNT; i++) {
+		settingsrow_pill_active(pick_pills[i], (keymap_action_t)i == current);
+	}
+	if (pick_done) {
+		lv_obj_set_style_bg_color(pick_done, theme()->surface_pressed, 0);
+	}
+}
+
+// Saved at once, like the double-click dialog's: the card stays up so the
+// choice can be seen, and Done or the veil takes it down.
+static void pick_action_cb(lv_event_t *e) {
 	if (choosing >= KEYMAP_BTN_COUNT) {
 		return;
 	}
-	keymap_set(choosing, action);
-	choosing = KEYMAP_BTN_COUNT;
+	keymap_set(choosing, (keymap_action_t)(intptr_t)lv_event_get_user_data(e));
 	refresh_values();
+	refresh_pick();
+}
+
+static void pick_close_cb(lv_event_t *e) {
+	lv_obj_t *target = lv_event_get_target(e);
+	if (target == pick_veil || lv_event_get_user_data(e)) {
+		lv_obj_set_hidden(pick_veil, true);
+		choosing = KEYMAP_BTN_COUNT;
+	}
+}
+
+static void build_pick_dialog(gui_config_t *cfg) {
+	pick_veil = lv_obj_create(lv_layer_top());
+	lv_obj_set_size(pick_veil, lv_pct(100), lv_pct(100));
+	lv_obj_set_style_bg_color(pick_veil, lv_color_black(), 0);
+	lv_obj_set_style_bg_opa(pick_veil, LV_OPA_60, 0);
+	lv_obj_set_style_border_width(pick_veil, 0, 0);
+	lv_obj_set_style_radius(pick_veil, 0, 0);
+	lv_obj_set_style_pad_all(pick_veil, 0, 0);
+	lv_obj_set_scrollable(pick_veil, false);
+	lv_obj_set_clickable(pick_veil, true);
+	lv_obj_set_hidden(pick_veil, true);
+	lv_obj_add_event_cb(pick_veil, pick_close_cb, LV_EVENT_CLICKED, NULL);
+
+	lv_obj_t *card = lv_obj_create(pick_veil);
+	lv_obj_set_size(card, cfg->screen_width - 2 * cfg->padding, LV_SIZE_CONTENT);
+	lv_obj_add_style(card, &theme_style_card, 0);
+	lv_obj_set_style_radius(card, 16, 0);
+	lv_obj_set_style_border_width(card, 0, 0);
+	lv_obj_set_style_shadow_width(card, 0, 0);
+	lv_obj_set_style_pad_all(card, 20, 0);
+	lv_obj_set_style_pad_row(card, 10, 0);
+	lv_obj_set_style_max_height(card, cfg->screen_height - 2 * cfg->padding, 0);
+	lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_OFF);
+	lv_obj_set_clickable(card, true);
+	lv_obj_set_event_bubble(card, false);
+	lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+	lv_obj_center(card);
+
+	pick_title = lv_label_create(card);
+	lv_label_set_text(pick_title, "");
+	lv_obj_add_style(pick_title, &theme_style_text, 0);
+	lv_obj_set_style_text_font(pick_title, &font_ui_24, 0);
+
+	dialog_heading(card, "remap_double_click_action");
+	lv_obj_t *actions = dialog_pills(card);
+	for (int i = 0; i < KEYMAP_ACTION_COUNT; i++) {
+		pick_pills[i] = dialog_pill(actions, keymap_action_name((keymap_action_t)i), i, pick_action_cb);
+	}
+
+	lv_obj_t *done = lv_btn_create(card);
+	pick_done = done;
+	lv_obj_set_size(done, lv_pct(100), 50);
+	lv_obj_set_style_radius(done, LV_RADIUS_CIRCLE, 0);
+	lv_obj_set_style_shadow_width(done, 0, 0);
+	lv_obj_set_style_border_width(done, 0, 0);
+	lv_obj_set_style_bg_color(done, theme()->surface_pressed, 0);
+	lv_obj_add_event_cb(done, pick_close_cb, LV_EVENT_CLICKED, (void *)1);
+	lv_obj_t *done_label = lv_label_create(done);
+	lv_label_set_text(done_label, tr("done"));
+	lv_obj_add_style(done_label, &theme_style_text, 0);
+	lv_obj_set_style_text_font(done_label, &font_ui_22, 0);
+	lv_obj_center(done_label);
 }
 
 static void open_chooser(keymap_button_t button) {
-	if (button >= KEYMAP_BTN_COUNT || !rows[button]) {
+	if (button >= KEYMAP_BTN_COUNT || !rows[button] || !pick_veil) {
 		return;
 	}
 	choosing = button;
-
-	keymap_action_t current = keymap_get(button);
-
-	// Six entries, exactly as many as the popover shows: one per action these
-	// buttons can perform, plus "none", since a button pressed by accident in a
-	// pocket is reason enough to disable it.
-	static popover_item_t items[KEYMAP_ACTION_COUNT];
-	for (int i = 0; i < KEYMAP_ACTION_COUNT; i++) {
-		items[i].label = keymap_action_name((keymap_action_t)i);
-		items[i].action = picked;
-		items[i].user = (void *)(intptr_t)i;
-		items[i].checked = ((keymap_action_t)i == current);
-	}
-
-	// The anchor is always the row, even when the photo was touched: the popover
-	// opens next to its anchor, and next to an invisible rectangle on a screen
-	// edge it would end up half off-screen.
-	popover_show(rows[button], items, KEYMAP_ACTION_COUNT);
+	refresh_pick();
+	lv_obj_set_hidden(pick_veil, false);
+	lv_obj_move_foreground(pick_veil);
 }
 
 static void pick_clicked_cb(lv_event_t *e) {
@@ -637,6 +764,7 @@ void remap_init(gui_config_t *cfg) {
 		model = sysinfo_model_by_panel(cfg->screen_width, cfg->screen_height);
 	}
 	bool one_flank = model && model->one_flank;
+	bool flank_knob = model && model->flank_knob;
 
 	lv_obj_t *title = settingsrow_title(remap_screen, cfg, "remap_buttons");
 	settingsrow_title_corner_slots(title, cfg, 0);
@@ -650,11 +778,23 @@ void remap_init(gui_config_t *cfg) {
 	// has them. The R3 Pro II's right flank starts under the title and its left
 	// flank runs four pixels past the bottom edge; the R1's photo stands on the
 	// bottom edge.
-	play_side.hits = one_flank ? R1_HITS : PLAY_HITS;
-	play_side.hit_count = one_flank ? (int)(sizeof(R1_HITS) / sizeof(R1_HITS[0]))
-									: (int)(sizeof(PLAY_HITS) / sizeof(PLAY_HITS[0]));
+	if (flank_knob) {
+		play_side.hits = RS2II_HITS;
+		play_side.hit_count = (int)(sizeof(RS2II_HITS) / sizeof(RS2II_HITS[0]));
+	} else {
+		play_side.hits = one_flank ? R1_HITS : PLAY_HITS;
+		play_side.hit_count = one_flank ? (int)(sizeof(R1_HITS) / sizeof(R1_HITS[0]))
+										: (int)(sizeof(PLAY_HITS) / sizeof(PLAY_HITS[0]));
+	}
 	play_side.rows_on_right = true;
-	if (one_flank) {
+	if (flank_knob) {
+		// The RS2 II's photo stands on the bottom edge too, narrower than the
+		// R1's: the flank and a strip of the face.
+		play_side.w = 180;
+		play_side.h = 660;
+		play_side.x = 0;
+		play_side.y = cfg->screen_height - play_side.h;
+	} else if (one_flank) {
 		play_side.w = 229;
 		play_side.h = 663;
 		play_side.x = 0;
@@ -667,7 +807,16 @@ void remap_init(gui_config_t *cfg) {
 	}
 	build_side(&play_side, cfg);
 
-	if (!one_flank) {
+	if (flank_knob) {
+		// The Fn key's rows under the last button's, in the column the rows
+		// use: the key itself is on the top edge, outside the picture.
+		if (model && model->fn_key) {
+			const hit_t *last = &RS2II_HITS[sizeof(RS2II_HITS) / sizeof(RS2II_HITS[0]) - 1];
+			int col_x = play_side.x + play_side.w + LEADER_W;
+			int y = play_side.y + last->y + last->h / 2 + row_h / 2 + 28;
+			build_fn_rows(cfg, col_x, y, cfg->screen_width - col_x - cfg->padding);
+		}
+	} else if (!one_flank) {
 		vol_side.hits = VOL_HITS;
 		vol_side.hit_count = (int)(sizeof(VOL_HITS) / sizeof(VOL_HITS[0]));
 		vol_side.rows_on_right = false;
@@ -676,6 +825,13 @@ void remap_init(gui_config_t *cfg) {
 		vol_side.x = cfg->screen_width - vol_side.w;
 		vol_side.y = cfg->screen_height - vol_side.h + 4;
 		build_side(&vol_side, cfg);
+
+		// The Fn key, on the models with one, in the free corner under the
+		// right flank's photo and above the volume rows, in their column.
+		if (model && model->fn_key) {
+			int col_w = vol_side.x - LEADER_W - cfg->padding;
+			build_fn_rows(cfg, cfg->padding, play_side.y + play_side.h + 20, col_w);
+		}
 	} else {
 		// Under the last row, in the column the rows use.
 		const hit_t *last = &R1_HITS[sizeof(R1_HITS) / sizeof(R1_HITS[0]) - 1];
@@ -686,6 +842,7 @@ void remap_init(gui_config_t *cfg) {
 		refresh_double();
 	}
 
+	build_pick_dialog(cfg);
 	refresh_values();
 
 	lv_obj_add_event_cb(remap_screen, screen_loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);

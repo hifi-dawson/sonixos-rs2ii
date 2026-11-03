@@ -1,6 +1,6 @@
 # Features
 
-This is everything Sonix Player can do today, on both the **R1** and the **R3 Pro II** unless it says otherwise.
+This is everything Sonix Player can do today, on the **R1**, the **R3 Pro II** and the **RS2 II** unless it says otherwise. The RS2 II has no Wi-Fi or Bluetooth, so anything that needs them is not on it.
 
 > If something is not on this page, Sonix Player does not do it yet. It is not a bug: open a **Feature request**.
 
@@ -41,6 +41,7 @@ This is everything Sonix Player can do today, on both the **R1** and the **R3 Pr
 - **Selection** - long press a track, album or artist to select more, then add them all to the queue, to the favourites or to a playlist, or remove them from a playlist.
 - **Delete tracks** from the card, after asking (turn it on in the settings first).
 - **Playlists** - create, rename, reorder and delete. You can back them up to the card as `.m3u` files that other players can read, and import `.m3u` playlists back, even when some files were moved.
+- **Albums of an artist** - by year or by name, either way round. By year, oldest first, unless you change it: Music settings > Library.
 
 ## Playback
 
@@ -54,6 +55,7 @@ This is everything Sonix Player can do today, on both the **R1** and the **R3 Pr
 - **ReplayGain** - off, by track or by album, read from the tags.
 - **Remember track** - the queue and the position are still there after a restart. You can also open Now Playing straight away at startup.
 - **Sleep timer** - set a time and the playback pauses by itself when it runs out. There is one for music, one for audiobooks and one for podcasts.
+- **Clear the queue** - tap the bin on the queue page with nothing selected.
 
 ## Now Playing
 
@@ -83,6 +85,13 @@ This is everything Sonix Player can do today, on both the **R1** and the **R3 Pr
 - The EQ, PEQ and MSEB also work on radio and streaming.
 - **DAC settings** - 4 digital filters, DRE, NOS, high gain, and gain compensation for DSD.
 - **DSD** - played natively, or converted to PCM when the output cannot take it (for example over Bluetooth).
+
+## Darwin (RS2 II)
+
+- **Digital filters** - the 11 Darwin filters.
+- **NOS** and the **harmonic controller**, 0 to 255.
+- **Gain** low, middle or high, and **DSD gain** in four steps.
+- **Shortcuts** - any button can open the Darwin page, step to the next filter, or switch NOS or the harmonics.
 
 ## Volume and outputs
 
@@ -117,6 +126,7 @@ This is everything Sonix Player can do today, on both the **R1** and the **R3 Pr
 - **Speed** and **stop at the end of the episode**.
 - **OPML** - import the podcasts you follow in another app, and export yours.
   > Put the `.opml` file in the root of the card or in the `Podcast` folder.
+- **Podcasts from the card** - on a player with no network, a Podcasts tile reads a `Podcasts` folder on the card, with one folder per show.
 
 ## Audiobooks
 
@@ -169,6 +179,7 @@ This is everything Sonix Player can do today, on both the **R1** and the **R3 Pr
 - Tap the title or the artist of what is playing to open **Now Playing**.
 - Choose which buttons are shown and in what order.
 - The status bar shows the clock and the battery, and can stay on in Now Playing too.
+- **Home and Queue circles** - two more for the control centre, hidden until you choose them.
 
 ## Buttons and remotes
 
@@ -178,6 +189,7 @@ This is everything Sonix Player can do today, on both the **R1** and the **R3 Pr
 - **Lock the buttons** with the screen off: volume down + power. The power button and the remote always work.
 - **Keyboard** - eleven layouts (English, Italian, German, Spanish, French, Dutch, Polish, Brazilian Portuguese, Czech, Russian, Japanese), as a full keyboard or as a phone keypad (T9). Japanese types romaji as hiragana or katakana, has a ten-key kana pad (tap a key again, or flick it, for the next kana of its row) and offers kanji candidates for the hiragana before the caret.
 - **Screenshots** - turn them on in Settings > More, then press volume up + power to save the screen to the card.
+- **Fn key** - on models with one, a press and a hold each take an action of their own. New actions for any button: lock the buttons, screen off, Home, Queue and Now Playing.
 
 ## Screen and appearance
 
@@ -188,6 +200,8 @@ This is everything Sonix Player can do today, on both the **R1** and the **R3 Pr
   > Pictures must be JPEG (not progressive), portrait, and no larger than 480x720 on the R3 Pro II or 480x800 on the R1.
 - **Boot logo** - the default one follows your theme and accent colour, or pick your own picture.
   > Put JPEG or PNG pictures in the `Bootlogo` folder. They are cropped to fill the screen.
+- **Home screen editor** - choose and order up to five tiles, with the rest under More: Settings > Appearance > Home screen.
+- **Theme packs** - Classic, Midnight, or your own from the card as `Themes/<name>.ini`: Settings > Appearance > Theme pack.
 
 ## Power and battery
 
@@ -197,6 +211,7 @@ This is everything Sonix Player can do today, on both the **R1** and the **R3 Pr
 - **Low battery** - a warning at 5%, and at 1% the player turns itself off with a 10 second countdown, also in standby.
 - **LED** - on or off, and off in standby.
 - **Power menu** - slide to power off or restart.
+- **Buttons with the screen off** - a switch per button: Settings > Power.
 
 ## System
 

@@ -71,12 +71,64 @@ bool theme_is_dark(void);
 void theme_toggle(void);
 
 // The accent colour, chosen from a fixed set of presets (Appearance > Accent
-// colour): 0 blue (default), 1 orange, 2 yellow, 3 green, 4 purple, 5 pink.
+// colour): 0 blue, 1 orange, 2 yellow, 3 green, 4 purple, 5 pink -- or
+// THEME_ACCENT_PACK, the theme pack's own accent, which is the default.
 // Applies to both dark and light palettes, persists in the config.
 #define THEME_ACCENT_COUNT 6
-lv_color_t theme_accent_preset(int index);
+#define THEME_ACCENT_PACK (-1)
+lv_color_t theme_accent_preset(int index); // THEME_ACCENT_PACK gives the pack's
 int theme_get_accent(void);
 void theme_set_accent(int index);
+
+// ---------------------------------------------------------------------------
+// Theme packs
+//
+// A pack is a dark palette and a light palette with a name. Two are built in:
+// "classic", GNOME Adwaita's colours as upstream Sonix has them, and "midnight",
+// a blue one. More come from the card, one file each in
+// <card>/Themes/<name>.ini (assets/themes/midnight.ini is the example):
+//
+//     [theme]
+//     name = Desert Night
+//     [dark]
+//     screen_bg = #111820
+//     surface = #1b2531
+//     surface_pressed = #273544
+//     panel = #0d1218
+//     cover_bg = #0d1218
+//     text_primary = #eef2f7
+//     text_secondary = #9fb0c2
+//     accent = #4f9cf0
+//     [light]
+//     ...the same keys...
+//
+// A section or key left out keeps the classic pack's colour. The dark or
+// light switch, the accent presets and the dynamic tint all work on top of
+// whichever pack is chosen. The choice persists in the config as the pack's
+// name, so a card pack that is missing at boot falls back to Classic until the
+// card with it is back.
+// ---------------------------------------------------------------------------
+
+#define THEME_PACK_MAX 16
+#define THEME_PACKS_FOLDER "Themes"
+
+typedef struct {
+	char name[40];	  // "classic", "midnight", or the file's name without .ini
+	char display[64]; // a translation tag for a built-in pack, the [theme] name for a card one
+	bool builtin;
+	theme_palette_t dark;
+	theme_palette_t light;
+} theme_pack_t;
+
+int theme_pack_count(void);
+const theme_pack_t *theme_pack(int index);
+int theme_get_pack(void);
+void theme_set_pack(int index);
+
+// Reads the card's Themes folder again: the built-in packs, then the card's
+// in name order. The chosen pack is kept by name; a card pack whose file
+// changed is applied afresh.
+void theme_packs_scan(const char *card_root);
 
 // Picks a specific theme rather than flipping; no-op when already active.
 void theme_set_dark(bool dark);

@@ -103,6 +103,16 @@ static void factory_clicked_cb(lv_event_t *e) {
 
 static lv_obj_t *sd_value;
 static lv_obj_t *sd_bar;
+static lv_obj_t *second_slot_value; // the second card slot, on the models with one
+
+// What sits in the second slot, read again every time the page opens, since
+// cards come and go.
+static void second_slot_refresh(void) {
+	char slot[64];
+	if (second_slot_value && sysinfo_second_slot(slot, sizeof(slot))) {
+		lv_label_set_text(second_slot_value, slot);
+	}
+}
 
 static void sd_refresh(void) {
 	if (!sd_value || !sd_bar) {
@@ -203,6 +213,7 @@ static void sysinfo_loaded_cb(lv_event_t *e) {
 	// Card usage changes while the player runs, so it is re-read on every
 	// opening, and the tap counters start over.
 	sd_refresh();
+	second_slot_refresh();
 	build_taps = 0;
 	easteregg_reset();
 }
@@ -270,6 +281,13 @@ static void build_sysinfo_page(gui_config_t *cfg) {
 	lv_obj_set_style_bg_opa(sd_bar, LV_OPA_40, LV_PART_MAIN);
 	lv_obj_set_style_radius(sd_bar, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
 	lv_obj_set_style_bg_color(sd_bar, theme()->accent, LV_PART_INDICATOR);
+
+	// The second card slot, where there is one.
+	char slot[64];
+	if (sysinfo_second_slot(slot, sizeof(slot))) {
+		info_row(container, "system_second_slot", &second_slot_value);
+		lv_label_set_text(second_slot_value, slot);
+	}
 
 	// --- the two versions ---
 	// The system version carries the thank-you (see easteregg.c), so it stays

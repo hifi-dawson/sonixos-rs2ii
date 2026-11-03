@@ -31,6 +31,8 @@
 #include "src/gui/ebook/ebookreader.h"
 #include "src/gui/ebook/ebooksettings.h"
 #include "src/gui/settings/processespage.h"
+#include "src/gui/settings/darwinpage.h"
+#include "src/gui/streaming/podcastpage.h"
 #include "src/gui/settings/language.h"
 #include "src/gui/library/libraryscan.h"
 #include "src/gui/wireless/dlna.h"
@@ -40,7 +42,10 @@
 #include "src/gui/flappybird/flappybird.h"
 #include "src/gui/gearboy/gearboyplay.h"
 #include "src/gui/shell/lowbattery.h"
+#include "src/gui/shell/hometiles.h"
 #include "src/gui/shell/main_menu.h"
+#include "src/gui/settings/homescreen.h"
+#include "src/gui/settings/themepage.h"
 #include "src/gui/library/medialist.h"
 #include "src/gui/library/filespage.h"
 #include "src/gui/library/imageview.h"
@@ -89,6 +94,8 @@
 #include "src/system/device/system.h"
 #include "src/system/device/usb.h"
 #include "src/system/device/power.h"
+#include "src/system/audio/alsa-controls.h"
+#include "src/system/audio/darwin.h"
 
 #include "lvgl/lvgl.h"
 #include "lvgl/src/display/lv_display_private.h"
@@ -549,6 +556,58 @@ static void key_async_cb(void *user_data) {
 	case GUI_KEY_PREV:
 		player_key_prev();
 		break;
+	// The shortcut key's work (keymap.h). The pages go through the switcher
+	// like a tap on a tile; the player sheet comes up over whatever is there.
+	case GUI_KEY_SCREEN_OFF:
+		power_screen_off();
+		break;
+	case GUI_KEY_HOME:
+		if (player_sheet_is_open()) {
+			player_sheet_close(false);
+		}
+		switch_screen_return_to(main_menu_screen);
+		break;
+	case GUI_KEY_QUEUE:
+		if (player_sheet_is_open()) {
+			player_sheet_close(false);
+		}
+		switch_screen(queue_screen);
+		break;
+	case GUI_KEY_NOW_PLAYING:
+		player_sheet_open(true);
+		break;
+	case GUI_KEY_DARWIN:
+		if (alsa_board_is_darwin()) {
+			if (player_sheet_is_open()) {
+				player_sheet_close(false);
+			}
+			switch_screen(darwin_screen);
+		}
+		break;
+	case GUI_KEY_DARWIN_FILTER:
+		if (alsa_board_is_darwin()) {
+			darwin_set_filter((darwin_filter() + 1) % DARWIN_FILTER_COUNT);
+			toast_success(darwin_filter_key(darwin_filter()));
+		}
+		break;
+	case GUI_KEY_NOS:
+		if (alsa_board_is_darwin()) {
+			darwin_set_nos(!darwin_nos());
+			toast_success(darwin_nos() ? "keymap_toast_nos_on" : "keymap_toast_nos_off");
+		}
+		break;
+	case GUI_KEY_HARMONIC:
+		if (alsa_board_is_darwin()) {
+			darwin_harmonic_set_enabled(!darwin_harmonic_enabled());
+			toast_success(darwin_harmonic_enabled() ? "keymap_toast_harmonic_on" : "keymap_toast_harmonic_off");
+		}
+		break;
+	case GUI_KEY_KEYS_LOCKED:
+		toast_success("keymap_toast_keys_locked");
+		break;
+	case GUI_KEY_KEYS_UNLOCKED:
+		toast_success("keymap_toast_keys_unlocked");
+		break;
 	}
 }
 
@@ -636,6 +695,8 @@ void gui_init(gui_config_t *cfg) {
 	gearboyplay_screen = lv_obj_create(NULL);
 	flappybird_screen = lv_obj_create(NULL);
 	metronomepage_screen = lv_obj_create(NULL);
+	darwin_screen = lv_obj_create(NULL); // built by musicsettings_init on the Darwin board, a tile on the main menu
+	podcast_screen = lv_obj_create(NULL); // built by podcastpage_init; a main-menu tile on a player without a radio
 
 	// Persistent topbar that stays above every screen.
 	topbar_init(cfg);
@@ -653,6 +714,7 @@ void gui_init(gui_config_t *cfg) {
 	// the screensaver, which is why they live on the system layer.
 	corners_init(cfg);
 
+	hometiles_init(); // the layout the main menu and the More page build from
 	main_menu_init(cfg);
 
 	music_init(cfg);
@@ -712,6 +774,8 @@ void gui_init(gui_config_t *cfg) {
 	// after devoptions: the system entry opens the page that can unlock it
 	systempage_init(cfg);
 	bootlogopage_init(cfg); // before appearance: its row carries the screen
+	homescreen_init(cfg);	// likewise
+	themepage_init(cfg);	// likewise
 	appearance_init(cfg);
 	language_init(cfg);
 	libraryscan_init(cfg);

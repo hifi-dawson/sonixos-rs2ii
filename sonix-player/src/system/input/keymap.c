@@ -14,22 +14,21 @@ static keymap_action_t actions[KEYMAP_BTN_COUNT];
 // kernel ever reports them in a different order, the user's choice stays
 // attached to the right button.
 static const char *const KEYS[KEYMAP_BTN_COUNT] = {
-	"button_prev", "button_play", "button_next", "button_vol_up", "button_vol_down",
+	"button_prev", "button_play", "button_next", "button_vol_up", "button_vol_down", "button_fn", "button_fn_long",
 };
 
-// What the buttons have always done, and keep doing until remapped.
+// What the buttons have always done, and keep doing until remapped. The Fn
+// key starts as the stock player's key lock, held for the screen.
 static const keymap_action_t DEFAULTS[KEYMAP_BTN_COUNT] = {
-	KEYMAP_ACTION_PREV,
-	KEYMAP_ACTION_PLAY_PAUSE,
-	KEYMAP_ACTION_NEXT,
-	KEYMAP_ACTION_VOLUME_UP,
-	KEYMAP_ACTION_VOLUME_DOWN,
+	KEYMAP_ACTION_PREV,		 KEYMAP_ACTION_PLAY_PAUSE, KEYMAP_ACTION_NEXT,		KEYMAP_ACTION_VOLUME_UP,
+	KEYMAP_ACTION_VOLUME_DOWN, KEYMAP_ACTION_LOCK_KEYS,	 KEYMAP_ACTION_SCREEN_OFF,
 };
 
 // The config stores the name, not the number: a readable file is half the
 // reason this player writes .ini instead of bytes.
 static const char *const ACTION_KEYS[KEYMAP_ACTION_COUNT] = {
-	"none", "play_pause", "prev", "next", "volume_up", "volume_down",
+	"none",	 "play_pause", "prev",		  "next",	"volume_up",	 "volume_down", "lock_keys", "screen_off",
+	"home", "queue",	   "now_playing", "darwin", "darwin_filter", "nos",		  "harmonic",
 };
 
 static keymap_action_t action_from_key(const char *name, keymap_action_t fallback) {
@@ -111,7 +110,9 @@ void keymap_set(keymap_button_t button, keymap_action_t action) {
 // entry that never reaches the language files stays untranslated in every
 // language, and nobody notices until a user of that language sees it.
 static const char *const KEYMAP_ACTION_NAMES[KEYMAP_ACTION_COUNT] = {
-	"keymap_nothing", "keymap_play_pause", "keymap_previous_track", "keymap_next_track", "keymap_volume_up", "keymap_volume_down",
+	"keymap_nothing",	  "keymap_play_pause", "keymap_previous_track", "keymap_next_track", "keymap_volume_up",
+	"keymap_volume_down", "keymap_lock_keys",  "keymap_screen_off",		"keymap_home",		 "keymap_queue",
+	"keymap_now_playing", "keymap_darwin",	   "keymap_darwin_filter",	"keymap_nos",		 "keymap_harmonic",
 };
 
 const char *keymap_action_name(keymap_action_t action) {

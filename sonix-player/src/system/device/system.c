@@ -1228,6 +1228,12 @@ static void log_key_event(const char *node, const struct input_event *ev) {
 // Hold the power key this long and the shutdown menu comes up instead of the
 // screen simply toggling.
 #define POWER_LONG_PRESS_MS 1200
+// The Fn key held: shorter than the power key's, since nothing drastic hangs
+// on it, and the stock player's own feels about this long.
+#define FN_LONG_PRESS_MS 800
+#ifndef KEY_FN
+#define KEY_FN 0x1d0 // linux/input-event-codes.h; the RS2 II's shortcut key
+#endif
 
 static uint32_t now_ms(void) {
 	struct timespec ts;
@@ -1251,7 +1257,7 @@ void input_set_volume_step(int percent) {
 
 // One step up or down, as a signed change of the volume.
 static int volume_step_delta(int code) {
-	int step = volume_step_percent;
+	int step = volume_step_percent * volume_step_scale(); // Darwin counts in twos, see alsa-controls.h
 	return code == KEY_VOLUMEUP ? step : -step;
 }
 
@@ -1279,6 +1285,10 @@ static void apply_volume_step(int code) {
 
 static volatile bool key_lock_when_off; // the option: the gesture is armed
 static volatile bool key_lock_engaged;	// the gesture's state
+// The shortcut key's lock (KEYMAP_ACTION_LOCK_KEYS): the buttons off whatever
+// the screen is doing, until the key is pressed again. The Fn key itself is
+// never locked out, so there is always a way back.
+static volatile bool key_lock_manual;
 
 void input_set_key_lock(bool on) {
 	key_lock_when_off = on;
@@ -1287,10 +1297,33 @@ void input_set_key_lock(bool on) {
 	}
 }
 
+// The buttons that work with the screen off (system.h). Read on the button
+// thread, written from the settings page: one word, so never half of one.
+static volatile unsigned screen_off_buttons = ~0u;
+
+void input_set_screen_off_buttons(unsigned mask) { screen_off_buttons = mask; }
+
+static keymap_button_t keymap_button_for_code(int code);
+
+// Whether this key, pressed with the screen off, is one of the buttons the
+// settings switched off for the dark screen.
+static bool button_off_for_dark_screen(int code) {
+	keymap_button_t button = keymap_button_for_code(code);
+	return button != KEYMAP_BTN_COUNT && !(screen_off_buttons & (1u << button)) && !power_screen_is_on();
+}
+
 // Whether volume down + power, pressed now, is the lock gesture.
 static bool key_lock_gesture_armed(void) { return key_lock_when_off && !power_screen_is_on(); }
 
-static bool keys_locked(void) { return key_lock_when_off && key_lock_engaged && !power_screen_is_on(); }
+static bool keys_locked(void) {
+	return key_lock_manual || (key_lock_when_off && key_lock_engaged && !power_screen_is_on());
+}
+
+static void key_lock_toggle(void) {
+	key_lock_manual = !key_lock_manual;
+	printf("input: buttons %s by the shortcut key\n", key_lock_manual ? "locked" : "unlocked");
+	gui_notify_key(key_lock_manual ? GUI_KEY_KEYS_LOCKED : GUI_KEY_KEYS_UNLOCKED);
+}
 
 // ---------------------------------------------------------------------------
 // Key combinations: volume up + power (screenshot), volume down + power (key
@@ -1400,6 +1433,7 @@ static bool combo_release(int code) {
 // On the R3 Pro II the two media keys arrive SWAPPED: the kernel reports
 // NEXTSONG for the UPPER one and PREVIOUSSONG for the lower. The stock firmware
 // compensates the same way, and there are years of muscle memory built on it.
+// The RS2 II's arrive the same way round, and HiBy's guide puts previous on top.
 // The R1 has no previous key: its one skip key, under play, is a GPIO key that
 // keyboard_gpio_add.sh declares as KEY_NEXTSONG, and it is next.
 //
@@ -1409,6 +1443,23 @@ static bool combo_release(int code) {
 static bool media_keys_swapped(void) {
 	const sysinfo_model_t *model = sysinfo_model();
 	return !model || model->media_keys_swapped;
+}
+
+// The RS2 II's volume is a wheel, not two keys: keyboard_ring.ko
+// ("sa-ring-keys") reports a click clockwise as KEY_RIGHT (106) and one back
+// as KEY_LEFT (105) -- measured on a unit; its .sh names them the other way
+// round. Read as the volume keys, every rule downstream -- the step, the key
+// lock, the remap -- is the one the other players already have.
+static void volume_wheel_translate(struct input_event *ev) {
+	const sysinfo_model_t *model = sysinfo_model();
+	if (!model || !model->volume_wheel) {
+		return;
+	}
+	if (ev->code == KEY_RIGHT) {
+		ev->code = KEY_VOLUMEUP;
+	} else if (ev->code == KEY_LEFT) {
+		ev->code = KEY_VOLUMEDOWN;
+	}
 }
 
 static keymap_button_t keymap_button_for_code(int code) {
@@ -1423,6 +1474,10 @@ static keymap_button_t keymap_button_for_code(int code) {
 		return KEYMAP_BTN_VOL_UP;
 	case KEY_VOLUMEDOWN:
 		return KEYMAP_BTN_VOL_DOWN;
+	case KEY_FN:
+		// The short press. The long one is KEYMAP_BTN_FN_LONG, decided by the
+		// hold in the button thread, like the power key's.
+		return KEYMAP_BTN_FN;
 	default:
 		return KEYMAP_BTN_COUNT;
 	}
@@ -1559,6 +1614,35 @@ static void run_mapped_action(keymap_button_t button) {
 		break;
 	case KEYMAP_ACTION_VOLUME_DOWN:
 		apply_volume_step(KEY_VOLUMEDOWN);
+		break;
+	// The shortcut actions. The lock is this thread's own; the rest are pages
+	// and settings, which belong to the GUI thread.
+	case KEYMAP_ACTION_LOCK_KEYS:
+		key_lock_toggle();
+		break;
+	case KEYMAP_ACTION_SCREEN_OFF:
+		gui_notify_key(GUI_KEY_SCREEN_OFF);
+		break;
+	case KEYMAP_ACTION_HOME:
+		gui_notify_key(GUI_KEY_HOME);
+		break;
+	case KEYMAP_ACTION_QUEUE:
+		gui_notify_key(GUI_KEY_QUEUE);
+		break;
+	case KEYMAP_ACTION_NOW_PLAYING:
+		gui_notify_key(GUI_KEY_NOW_PLAYING);
+		break;
+	case KEYMAP_ACTION_DARWIN:
+		gui_notify_key(GUI_KEY_DARWIN);
+		break;
+	case KEYMAP_ACTION_DARWIN_FILTER:
+		gui_notify_key(GUI_KEY_DARWIN_FILTER);
+		break;
+	case KEYMAP_ACTION_NOS:
+		gui_notify_key(GUI_KEY_NOS);
+		break;
+	case KEYMAP_ACTION_HARMONIC:
+		gui_notify_key(GUI_KEY_HARMONIC);
 		break;
 	case KEYMAP_ACTION_NONE:
 	default:
@@ -1706,8 +1790,8 @@ static void *input_thread_func(void *arg) {
 
 		if (key_repeats_held(held, info->headset)) {
 			timeout = (int)(next_repeat > now ? next_repeat - now : 0);
-		} else if (held == KEY_POWER && !long_press_done) {
-			uint32_t due = held_since + POWER_LONG_PRESS_MS;
+		} else if ((held == KEY_POWER || held == KEY_FN) && !long_press_done) {
+			uint32_t due = held_since + (held == KEY_FN ? FN_LONG_PRESS_MS : POWER_LONG_PRESS_MS);
 			timeout = (int)(due > now ? due - now : 0);
 		}
 
@@ -1781,6 +1865,13 @@ static void *input_thread_func(void *arg) {
 					power_notify_activity();
 					gui_notify_power_menu();
 				}
+			} else if (held == KEY_FN && !long_press_done && (int32_t)(now - (held_since + FN_LONG_PRESS_MS)) >= 0) {
+				// The Fn key held: its second action, and the release that
+				// follows does nothing more.
+				long_press_done = true;
+				printf("input: Fn held\n");
+				power_notify_activity();
+				run_mapped_action(KEYMAP_BTN_FN_LONG);
 			}
 			continue;
 		}
@@ -1795,6 +1886,7 @@ static void *input_thread_func(void *arg) {
 		}
 
 		log_key_event(node, &ev);
+		volume_wheel_translate(&ev);
 
 		// The headphone remote reports a press it never releases as the device
 		// wakes from suspend: see power_headset_keys_settling(). A press let
@@ -1810,8 +1902,23 @@ static void *input_thread_func(void *arg) {
 		// the panel is dark. The power key is not one of them. A release still
 		// closes a press that went down before the lock. Volume down is still
 		// counted towards the combination, or the lock could not be undone.
-		if (!info->headset && keymap_button_for_code(ev.code) != KEYMAP_BTN_COUNT && keys_locked() &&
-			(ev.value != 0 || ev.code != held)) {
+		if (!info->headset && ev.code != KEY_FN && keymap_button_for_code(ev.code) != KEYMAP_BTN_COUNT &&
+			keys_locked() && (ev.value != 0 || ev.code != held)) {
+			if (ev.code == KEY_VOLUMEDOWN) {
+				if (ev.value == 1) {
+					combo_press(ev.code);
+				} else if (ev.value == 0) {
+					combo_release(ev.code);
+				}
+			}
+			continue;
+		}
+
+		// Buttons switched off for the dark screen (the Power page): nothing,
+		// press or release, and no waking the screen, unless the release
+		// closes a press made with the screen on. Volume down still counts
+		// towards the lock gesture, as under the lock.
+		if (!info->headset && button_off_for_dark_screen(ev.code) && (ev.value != 0 || ev.code != held)) {
 			if (ev.code == KEY_VOLUMEDOWN) {
 				if (ev.value == 1) {
 					combo_press(ev.code);
@@ -1890,6 +1997,10 @@ static void *input_thread_func(void *arg) {
 			} else if (info->headset && ev.code == KEY_PLAYPAUSE) {
 				// Counted, not acted on: see hookclicks.h.
 				hook_clicks_press(&hook, held_since);
+			} else if (!info->headset && ev.code == KEY_FN) {
+				// Decided on release (short) or on the deadline (long), as the
+				// power key is.
+				deferred = true;
 			} else if (ev.code != KEY_POWER) {
 				// Anything else ends the gesture: a volume key pressed halfway
 				// through means the centre button is finished with.
@@ -1920,10 +2031,11 @@ static void *input_thread_func(void *arg) {
 						dbl_code = ev.code;
 						dbl_until = now_ms() + DOUBLE_CLICK_MS;
 					}
-				} else if (deferred && !seeked && !held_repeated && !combo) {
+				} else if (deferred && !seeked && !held_repeated && !combo && !long_press_done) {
 					// A skip button let go before it became a seek: now it
 					// skips. Likewise a deferred volume down let go before it
-					// started repeating.
+					// started repeating, and the Fn key let go before its hold
+					// ran the held action.
 					run_mapped_action(keymap_button_for_code(ev.code));
 				}
 				// And one that did become a seek: this is where the music moves
@@ -2007,7 +2119,7 @@ void input_host_button(int code, bool down) {
 // these threads ignore.
 #ifndef HOST_BUILD
 static void start_builtin_input_threads(void) {
-	static const char *const NAMES[] = {"md-gpio-keys", "jz adc keyboard"};
+	static const char *const NAMES[] = {"md-gpio-keys", "jz adc keyboard", "sa-ring-keys"};
 	const char *touch = panel_touch_device();
 	int found = 0;
 

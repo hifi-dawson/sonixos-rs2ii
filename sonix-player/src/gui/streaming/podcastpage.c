@@ -35,6 +35,7 @@
 #include "src/system/streaming/podcastcache.h"
 #include "src/system/streaming/podcastdl.h"
 #include "src/system/streaming/podcaststate.h"
+#include "src/system/device/sysinfo.h"
 #include "src/system/streaming/podcastsubs.h"
 #include "src/system/streaming/streamturn.h"
 #include "src/system/device/power.h"
@@ -218,6 +219,7 @@ static void refresh_page_state(void);
 static bool refresh_notes(void);
 static void refresh_corner_buttons(void);
 static bool network_up(void);
+static bool card_only(void);
 static void paint_pill(lv_obj_t *btn, bool on);
 static void refresh_section_tabs(void);
 static void row_clicked_cb(lv_event_t *e);
@@ -1158,7 +1160,8 @@ static void fill_list(int from) {
 	// name.
 	bool home_view = list_kind == JOB_FOLLOWED || list_kind == JOB_TRENDING || list_kind == JOB_CARD;
 	if (pill_row) {
-		if (home_view) {
+		// One view only on a player without a radio: nothing to pick between.
+		if (home_view && !card_only()) {
 			lv_obj_set_hidden(pill_row, false);
 		} else {
 			lv_obj_set_hidden(pill_row, true);
@@ -2979,8 +2982,11 @@ static void build_card_empty(lv_obj_t *parent) {
 	lv_obj_set_scrollable(tree, false);
 	lv_obj_set_event_bubble(tree, true);
 	lv_obj_t *tree_text = lv_label_create(tree);
-	lv_label_set_text_fmt(tree_text, "%s/\n    %s/\n        cover.jpg\n        2026-10-05 %s.mp3", PODCASTDL_FOLDER,
-						  tr("podcast_tree_show"), tr("podcast_tree_episode"));
+	// The folder named is the one the player will read: "Podcasts" where that
+	// is the whole point of the page, the downloads' "Podcast" elsewhere.
+	lv_label_set_text_fmt(tree_text, "%s/\n    %s/\n        cover.jpg\n        2026-10-05 %s.mp3",
+						  card_only() ? PODCASTDL_FOLDER_PLURAL : PODCASTDL_FOLDER, tr("podcast_tree_show"),
+						  tr("podcast_tree_episode"));
 	lv_obj_add_style(tree_text, &theme_style_text, 0);
 	lv_obj_set_style_text_font(tree_text, &font_ui_18, 0);
 	lv_obj_set_style_text_line_space(tree_text, 4, 0);
@@ -3000,8 +3006,20 @@ static void refresh_card_empty(void) {
 
 // The line about the network, and which tabs can be used: the two that need
 // the network are greyed without it.
+// Without a radio (the RS2 II) the page is its card view alone: no tabs to
+// pick from and no catalogue to be told about.
+static bool card_only(void) {
+	const sysinfo_model_t *model = sysinfo_model();
+	return model && model->no_wireless;
+}
+
 static void refresh_offline(void) {
 	if (!offline_banner) {
+		return;
+	}
+	if (card_only()) {
+		lv_obj_set_hidden(offline_banner, true);
+		lv_obj_set_hidden(pill_row, true);
 		return;
 	}
 	if (offline) {
@@ -3020,7 +3038,9 @@ static void refresh_offline(void) {
 
 static void build_page(gui_config_t *cfg) {
 	g_cfg = cfg;
-	podcast_screen = lv_obj_create(NULL);
+	if (!podcast_screen) { // gui.c makes it early where a main-menu tile points at it
+		podcast_screen = lv_obj_create(NULL);
+	}
 	lv_obj_add_event_cb(podcast_screen, list_loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);
 	lv_obj_add_event_cb(podcast_screen, list_unloaded_cb, LV_EVENT_SCREEN_UNLOADED, NULL);
 	podcast_list_screen = podcast_screen;
@@ -3060,6 +3080,9 @@ static void build_page(gui_config_t *cfg) {
 	// swipe-back and the player sheet.
 	lv_obj_set_event_bubble(pill_row, true);
 
+	// The three tabs are made whatever the player, so their indices hold; on a
+	// player without a radio the row stays hidden (refresh_offline) and the
+	// card view is the whole page.
 	tabbar_create(&section_tabs, pill_row);
 	tabbar_add(&section_tabs, "podcast_pill_followed", pill_clicked_cb, (void *)(intptr_t)JOB_FOLLOWED);
 	tabbar_add(&section_tabs, "podcast_pill_card", pill_clicked_cb, (void *)(intptr_t)JOB_CARD);
@@ -4000,6 +4023,11 @@ void podcastpage_init(gui_config_t *cfg) {
 	// magnifier beside it. The downloaded episodes are the "on the card" pill.
 	settings_btn = corner_button(cfg, 0, &icon_music_settings, open_settings_cb);
 	search_btn = corner_button(cfg, 1, &icon_search, open_search_cb);
+	// The search asks the catalogue: nothing to ask without a radio.
+	const sysinfo_model_t *corner_model = sysinfo_model();
+	if (corner_model && corner_model->no_wireless) {
+		lv_obj_add_flag(search_btn, LV_OBJ_FLAG_HIDDEN);
+	}
 
 	build_search_page(cfg);
 	build_settings_page(cfg);

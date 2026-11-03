@@ -17,12 +17,15 @@
 #include "src/gui/audio/peqpage.h"
 #include "src/gui/nowplaying/coverflow.h"
 #include "src/gui/settings/artistexceptions.h"
+#include "src/gui/settings/darwinpage.h"
 #include "src/gui/settings/lastfmsettings.h"
 #include "src/gui/library/medialist.h"
 #include "src/gui/shell/settingsrow.h"
 #include "src/gui/shell/switcher.h"
 #include "src/gui/shell/theme.h"
 #include "src/system/audio/alsa-controls.h"
+#include "src/system/audio/darwin.h"
+#include "src/system/device/sysinfo.h"
 #include "src/gui/shell/topbar.h"
 #include "src/system/playback/playlist.h"
 #include "src/system/playback/sleeptimer.h"
@@ -1203,7 +1206,21 @@ void musicsettings_set_mseb_enabled(bool enabled) {
 // and a grey one on an enabled fade is not a nuance, it is a lie.
 static lv_obj_t *eq_row, *peq_row, *mseb_row, *soundfield_row, *crossfeed_row, *fade_row, *balance_row, *vlimit_row;
 
+// Darwin's row, on its board only: the filter in force as its value, and the
+// chevron green while the harmonic stage is on, the one part of it that can
+// be switched off.
+static lv_obj_t *darwin_row, *darwin_row_value;
+
+static void refresh_darwin_row(void) {
+	if (!darwin_row) {
+		return;
+	}
+	lv_label_set_text(darwin_row_value, darwinpage_filter_short());
+	settingsrow_chevron_active(darwin_row, darwin_harmonic_enabled());
+}
+
 static void refresh_active_chevrons(void) {
+	refresh_darwin_row();
 	settingsrow_chevron_active(eq_row, eq_get_enabled());
 	settingsrow_chevron_active(peq_row, peq_get_enabled());
 	settingsrow_chevron_active(mseb_row, mseb_get_enabled());
@@ -1628,6 +1645,31 @@ static void allow_delete_cb(lv_event_t *e) {
 	medialist_set_allow_delete(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
 
+// The order of one artist's records (medialist_artist_album_order), four pills
+// named by the sort menu's own labels.
+static lv_obj_t *album_order_pills;
+static lv_obj_t *album_order_pill[MEDIALIST_ARTIST_ALBUMS_ORDER_COUNT];
+static const char *const ALBUM_ORDER_KEYS[MEDIALIST_ARTIST_ALBUMS_ORDER_COUNT] = {
+	[MEDIALIST_ARTIST_ALBUMS_YEAR] = "medialist_sort_year_up",
+	[MEDIALIST_ARTIST_ALBUMS_YEAR_DESC] = "medialist_sort_year_down",
+	[MEDIALIST_ARTIST_ALBUMS_NAME] = "medialist_sort_name_az",
+	[MEDIALIST_ARTIST_ALBUMS_NAME_DESC] = "medialist_sort_name_za",
+};
+
+static void album_order_refresh(void) {
+	for (int i = 0; i < MEDIALIST_ARTIST_ALBUMS_ORDER_COUNT; i++) {
+		settingsrow_pill_active(album_order_pill[i], i == (int)medialist_artist_album_order());
+	}
+}
+
+static void album_order_pick_cb(lv_event_t *e) {
+	if (player_sheet_drag_active() || switcher_back_drag_active()) {
+		return;
+	}
+	medialist_set_artist_album_order((medialist_artist_album_order_t)(intptr_t)lv_event_get_user_data(e));
+	album_order_refresh();
+}
+
 static void build_library_page(gui_config_t *cfg) {
 	library_screen = lv_obj_create(NULL);
 	lv_obj_t *container = settingsrow_page(library_screen, cfg, "musicsettings_library");
@@ -1674,6 +1716,16 @@ static void build_library_page(gui_config_t *cfg) {
 	option_note(container, "musicsettings_show_artist_note");
 	artist_refresh();
 	theme_register_refresh(artist_refresh);
+
+	// The order of one artist's records: by year, the way a discography
+	// reads, or by name, either way round.
+	settingsrow_pills(container, "musicsettings_artist_albums_order", &album_order_pills);
+	for (int i = 0; i < MEDIALIST_ARTIST_ALBUMS_ORDER_COUNT; i++) {
+		album_order_pill[i] = settingsrow_pill(album_order_pills, ALBUM_ORDER_KEYS[i], i, album_order_pick_cb);
+	}
+	option_note(container, "musicsettings_artist_albums_order_note");
+	album_order_refresh();
+	theme_register_refresh(album_order_refresh);
 
 	// A small mark under a track's title saying what the file is. It comes from
 	// what the scan wrote down, so a library indexed by an older build wears no
@@ -1931,6 +1983,8 @@ static void musicsettings_loaded_cb(lv_event_t *e) {
 	rg_refresh();
 }
 
+static void finish_init(void);
+
 void musicsettings_init(gui_config_t *cfg) {
 	lv_obj_t *container = settingsrow_page(musicsettings_screen, cfg, "music");
 
@@ -1951,8 +2005,12 @@ void musicsettings_init(gui_config_t *cfg) {
 	build_nowplaying_page(cfg);
 	settingsrow_add(container, "musicsettings_now_playing", NULL, switch_screen_cb, nowplaying_screen);
 
+	// Last.fm scrobbles over the network: no row on a player without one.
 	lastfmsettings_init(cfg);
-	settingsrow_add(container, "lastfm", NULL, switch_screen_cb, lastfmsettings_screen());
+	const sysinfo_model_t *model = sysinfo_model();
+	if (!(model && model->no_wireless)) {
+		settingsrow_add(container, "lastfm", NULL, switch_screen_cb, lastfmsettings_screen());
+	}
 
 	build_eq_page(cfg);
 	eq_row = settingsrow_add(container, "equaliser", NULL, switch_screen_cb, eq_screen);
@@ -1980,6 +2038,18 @@ void musicsettings_init(gui_config_t *cfg) {
 
 	build_volume_limit_page(cfg);
 	vlimit_row = settingsrow_add(container, "musicsettings_volume_limit", NULL, switch_screen_cb, vlimit_screen);
+
+	// Darwin has none of the rows below: its gain has three positions rather
+	// than a switch, and there is no codec, so no filters, NOS or DRE of the
+	// CS43198's, and no DSD compensation on a register that runs the other way.
+	// Its own converter's page stands in for them.
+	if (alsa_board_is_darwin()) {
+		darwin_init();
+		darwinpage_init(cfg);
+		darwin_row = settingsrow_add(container, "darwin", &darwin_row_value, switch_screen_cb, darwinpage_screen());
+		finish_init();
+		return;
+	}
 
 	// The gain step: off = low gain (the stock default), on = +6 dB.
 	settingsrow_toggle(container, "musicsettings_high_gain", &gain_switch, gain_toggle_cb);
@@ -2022,20 +2092,25 @@ void musicsettings_init(gui_config_t *cfg) {
 		}
 	}
 
-	theme_register_refresh(rg_refresh);
 	theme_register_refresh(dsd_gain_refresh);
+
+	set_dac_filter((int)config_get_int("audio", "dac_filter", 0));
+	set_dac_dre((int)config_get_int("audio", "dac_dre", 1));
+	set_dac_nos((int)config_get_int("audio", "dac_nos", 0));
+
+	finish_init();
+}
+
+// What every board's music page ends with, whichever converter rows it has.
+static void finish_init(void) {
+	theme_register_refresh(rg_refresh);
 	lv_obj_add_event_cb(musicsettings_screen, musicsettings_loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);
 
 	// What was chosen last time becomes effective at boot. audio_init has
 	// already written a volume by this point, so the gain is re-applied here to
 	// keep the two consistent.
 	fade_apply_setting();
-
-	set_dac_filter((int)config_get_int("audio", "dac_filter", 0));
-	set_dac_dre((int)config_get_int("audio", "dac_dre", 1));
-	set_dac_nos((int)config_get_int("audio", "dac_nos", 0));
 	set_high_gain((int)config_get_int("audio", "high_gain", 0));
-
 
 	lv_obj_add_event_cb(musicsettings_screen, screen_loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);
 	// The parametric equaliser's chevron, which no setter on this page repaints,

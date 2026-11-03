@@ -70,9 +70,15 @@ typedef struct {
 	const char *serial_prefix; // what the number on the box starts with
 	bool pmic_charger;		   // charged by the AXP2101 alone, no MP2731 (axpcharge.h)
 	bool cs43131;			   // one CS43131, 3.5 mm only, no HBC3000 (alsa-controls.h)
+	bool darwin;			   // HM200 FPGA and R2R ladder, NJU72315 volume, no codec (alsa-controls.h)
 	bool tap_wake;			   // the touch controller can wake the screen (power.h)
 	bool one_flank;			   // every button on the right flank (remap.c)
 	bool media_keys_swapped;   // KEY_NEXTSONG is the upper skip key, not next (system.c)
+	bool volume_wheel;		   // the volume is the "sa-ring-keys" encoder, not two keys (system.c)
+	bool no_wireless;		   // no Wi-Fi and no Bluetooth: the main menu shows neither (main_menu.c)
+	const char *second_slot_host; // the MMC host of a second card slot ("mmc0"), NULL with one slot
+	bool fn_key;				  // a shortcut key the kernel reports as KEY_FN (keymap.h, system.c)
+	bool flank_knob;			  // every button on the right flank under a volume knob (remap.c)
 } sysinfo_model_t;
 
 // The entry for the name in the file, or NULL when the file says nothing or
@@ -107,6 +113,12 @@ typedef struct {
 
 // false when there is no card or it cannot be queried.
 bool sysinfo_sd_usage(sysinfo_storage_t *out);
+
+// The second card slot, on the models that have one (second_slot_host): what
+// is in it, as a line for the information page -- "Empty", or the card's
+// size. The kernel reports a card there whether or not anything mounts it;
+// reading it is a later matter. false when the model has no second slot.
+bool sysinfo_second_slot(char *out, size_t out_size);
 
 // "12.3 GB", "512 MB", "48 KB". Decimal point rather than comma: it is the same
 // string in all five languages and does not pass through tr().

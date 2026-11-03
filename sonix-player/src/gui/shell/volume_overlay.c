@@ -98,7 +98,7 @@ static void set_icon_for(int percent) {
 // The finger moved the slider: apply it and keep the pill up.
 static void slider_changed_cb(lv_event_t *e) {
 	(void)e;
-	int percent = (int)lv_slider_get_value(overlay_slider);
+	int percent = (int)lv_slider_get_value(overlay_slider) * volume_step_scale(); // the slider counts as the screen does
 
 	set_volume_percent(percent);
 
@@ -106,10 +106,10 @@ static void slider_changed_cb(lv_event_t *e) {
 	// line out holds a fixed level, and a pill showing a number the hardware
 	// ignored would be the one thing on screen saying otherwise.
 	percent = get_volume_percent();
-	lv_slider_set_value(overlay_slider, percent, LV_ANIM_OFF);
+	lv_slider_set_value(overlay_slider, percent / volume_step_scale(), LV_ANIM_OFF);
 	set_icon_for(percent);
 	shown_percent = percent;
-	lv_label_set_text_fmt(overlay_label, "%d", percent);
+	lv_label_set_text_fmt(overlay_label, "%d", volume_shown(percent));
 	apply_label_color(percent);
 
 	lv_timer_reset(hide_timer);
@@ -146,9 +146,9 @@ void volume_overlay_show(int percent) {
 
 	// Never yank the knob out from under a finger.
 	if (!lv_obj_has_state(overlay_slider, LV_STATE_PRESSED)) {
-		lv_slider_set_value(overlay_slider, percent, LV_ANIM_OFF);
+		lv_slider_set_value(overlay_slider, percent / volume_step_scale(), LV_ANIM_OFF);
 	}
-	lv_label_set_text_fmt(overlay_label, "%d", percent);
+	lv_label_set_text_fmt(overlay_label, "%d", volume_shown(percent));
 	apply_label_color(percent);
 
 	lv_obj_set_hidden(veil, false);
@@ -205,7 +205,7 @@ void volume_overlay_init(gui_config_t *cfg) {
 	overlay_slider = lv_slider_create(overlay);
 	lv_obj_set_height(overlay_slider, 10);
 	lv_obj_set_flex_grow(overlay_slider, 1);
-	lv_slider_set_range(overlay_slider, 0, 100);
+	lv_slider_set_range(overlay_slider, 0, 100 / volume_step_scale()); // 0..50 on Darwin, see alsa-controls.h
 
 	lv_obj_set_style_radius(overlay_slider, LV_RADIUS_CIRCLE, LV_PART_MAIN);
 	lv_obj_set_style_radius(overlay_slider, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);

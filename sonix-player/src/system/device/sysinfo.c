@@ -1,10 +1,12 @@
 #include "sysinfo.h"
 
 #include "src/system/core/respath.h"
+#include "src/system/core/lang.h"
 
 #include "src/system/device/system.h"
 
 #include <ctype.h>
+#include <dirent.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -18,8 +20,8 @@ static char device_name[64];
 static char dac_info[96];
 static char ota_repo[128];
 
-// Every player this binary knows how to be. Both serial prefixes are the ones
-// printed on the box.
+// Every player this binary knows how to be. The R3 Pro II's and the R1's serial
+// prefixes are the ones printed on the box.
 static const sysinfo_model_t MODELS[] = {
 	{
 		.name = "HiBy R3 Pro II",
@@ -44,6 +46,27 @@ static const sysinfo_model_t MODELS[] = {
 		.tap_wake = false,
 		.one_flank = true,
 		.media_keys_swapped = false,
+	},
+	// The RS2 II's serial prefix is a guess at the box, not yet checked against
+	// a unit. Its keys are the stock module_driver's: power and previous on
+	// GPIOs, play and next on the ADC, and the volume on a wheel.
+	{
+		.name = "HiBy RS2 II",
+		.panel_width = 480,
+		.panel_height = 800,
+		.update_stem = "rs2ii",
+		.serial_prefix = "RS2II",
+		.pmic_charger = true,
+		.cs43131 = false,
+		.darwin = true,
+		.tap_wake = false,
+		.one_flank = false,
+		.media_keys_swapped = true, // going down from the knob: previous, play, next, as HiBy's guide has them
+		.volume_wheel = true,
+		.no_wireless = true,
+		.second_slot_host = "mmc0", // the card the player reads is on mmc1
+		.fn_key = true,
+		.flank_knob = true,
 	},
 };
 
@@ -299,4 +322,77 @@ const char *sysinfo_serial_number(void) {
 		snprintf(serial, sizeof(serial), "%s%s", model->serial_prefix, id);
 	}
 	return serial;
+}
+
+// ---------------------------------------------------------------------------
+// the second card slot
+// ---------------------------------------------------------------------------
+//
+// Presence is the host's child device, /sys/class/mmc_host/<host>/<host>:<rca>,
+// which the kernel makes when a card answers and removes when it goes. The
+// size is the block device under it, in 512-byte sectors.
+bool sysinfo_second_slot(char *out, size_t out_size) {
+	if (!out || out_size == 0) {
+		return false;
+	}
+	out[0] = '\0';
+	const sysinfo_model_t *model = sysinfo_model();
+	if (!model || !model->second_slot_host) {
+		return false;
+	}
+
+	char host_dir[128];
+	snprintf(host_dir, sizeof(host_dir), "/sys/class/mmc_host/%s", model->second_slot_host);
+	DIR *dir = opendir(host_dir);
+	if (!dir) {
+		snprintf(out, out_size, "%s", tr("system_slot_empty"));
+		return true;
+	}
+
+	char card[128] = "";
+	size_t prefix = strlen(model->second_slot_host);
+	struct dirent *de;
+	while ((de = readdir(dir)) != NULL) {
+		if (strncmp(de->d_name, model->second_slot_host, prefix) == 0 && de->d_name[prefix] == ':') {
+			snprintf(card, sizeof(card), "%s", de->d_name);
+			break;
+		}
+	}
+	closedir(dir);
+	if (!card[0]) {
+		snprintf(out, out_size, "%s", tr("system_slot_empty"));
+		return true;
+	}
+
+	// The block device's name is not fixed, so its folder is listed.
+	char block_dir[256];
+	snprintf(block_dir, sizeof(block_dir), "%s/%s/block", host_dir, card);
+	uint64_t bytes = 0;
+	DIR *blocks = opendir(block_dir);
+	if (blocks) {
+		while ((de = readdir(blocks)) != NULL) {
+			if (de->d_name[0] == '.') {
+				continue;
+			}
+			char size_path[384];
+			snprintf(size_path, sizeof(size_path), "%s/%s/size", block_dir, de->d_name);
+			FILE *f = fopen(size_path, "r");
+			unsigned long long sectors = 0;
+			if (f) {
+				if (fscanf(f, "%llu", &sectors) != 1) {
+					sectors = 0;
+				}
+				fclose(f);
+			}
+			bytes = (uint64_t)sectors * 512;
+			break;
+		}
+		closedir(blocks);
+	}
+	if (bytes) {
+		sysinfo_format_size(bytes, out, out_size);
+	} else {
+		snprintf(out, out_size, "%s", tr("system_slot_card"));
+	}
+	return true;
 }

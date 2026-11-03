@@ -21,6 +21,7 @@
 // shows up as an episode.
 
 #define PODCASTDL_FOLDER "Podcast"
+#define PODCASTDL_FOLDER_PLURAL "Podcasts" // taken instead when the card has it
 
 typedef enum {
 	PODCASTDL_IDLE,

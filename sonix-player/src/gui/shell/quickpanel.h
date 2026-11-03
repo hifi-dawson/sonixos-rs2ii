@@ -67,6 +67,11 @@ typedef enum {
 	QP_BTN_SLEEP_PODCAST,
 	QP_BTN_WIFI_TRANSFER,
 	QP_BTN_GAPLESS,
+	// Straight to the main menu from anywhere, the one button here that is not
+	// a setting. Among the unused ones until chosen, like the others that came
+	// after the first eight.
+	QP_BTN_HOME,
+	QP_BTN_QUEUE, // the queue page, from anywhere; the same late arrival as Home
 	QP_BTN_COUNT,
 	QP_BTN_NONE = QP_BTN_COUNT, // an empty place in the grid
 } quickpanel_button_t;

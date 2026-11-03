@@ -195,6 +195,7 @@ ICONS = [
     ("lineout.svg", "lineout", 46),
     ("fade-track.svg", "fade_track", 46),
     ("low-gain.svg", "low_gain", 46),
+    ("mid-gain.svg", "mid_gain", 46),  # Darwin's third position
     ("high-gain.svg", "high_gain", 46),
     # AirPlay and SonixLink carry the same drawing as their status bar glyph at
     # circle size: the toggle and the symbol it raises must read as one thing.
@@ -216,6 +217,8 @@ ICONS = [
     # the gap itself -- the two halves apart while off, closed up while on.
     ("gapless-on-quick.svg", "gapless_on_quick", 46),
     ("gapless-off-quick.svg", "gapless_off_quick", 46),
+    ("home-quick.svg", "home_quick", 46),  # the control centre's way to the main menu
+    ("queue-quick.svg", "queue_quick", 46),  # ...and to the queue
     # File types, in the file manager and on the web page: one glyph per
     # family, at the size of the folder beside them.
     ("files-music.svg", "files_music", 32),
@@ -439,6 +442,7 @@ COLOR_ICONS = [
     ("audiobook-continue.png", "menu_audiobook_continue", SECTION_ICON_SIZE),
     ("settings.png", "menu_settings", MAIN_MENU_ICON_SIZE),
     ("more.png", "menu_more", MAIN_MENU_ICON_SIZE),
+    ("darwin.png", "menu_darwin", MAIN_MENU_ICON_SIZE), # the RS2 II's converter page; HiBy's own mark until the theme has one
     # What lives inside "More", at section size.
     ("dac.png", "menu_dac", SECTION_ICON_SIZE),
     ("gearboy.png", "menu_gearboy", SECTION_ICON_SIZE),

@@ -115,6 +115,14 @@ void storage_release_for_shutdown(void);
 // until set.
 void input_set_key_lock(bool on);
 
+// Which buttons on the case work while the screen is off: a mask of
+// (1u << keymap_button_t), KEYMAP_BTN_FN standing for the Fn key held as well
+// as pressed. A button whose bit is clear is ignored while the screen is off,
+// and does not wake it; a release still closes a press made with the screen
+// on. The power key and the headphone remote are not among them. All set
+// until set.
+void input_set_screen_off_buttons(unsigned mask);
+
 // How far one press of a volume key moves the volume, in percent: on the case,
 // on the headphone cable and from Bluetooth headphones alike. Clamped to
 // VOLUME_STEP_MIN..VOLUME_STEP_MAX; VOLUME_STEP_MIN until set.

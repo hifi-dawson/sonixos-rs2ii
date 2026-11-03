@@ -7,6 +7,7 @@
 #include "src/system/audio/replaygain.h"
 #include "src/system/audio/speed.h"
 #include "src/system/audio/swvolume.h"
+#include "src/system/audio/darwin.h"
 #include "src/system/audio/eq.h"
 #include "src/system/audio/decimate.h"
 #include "src/system/core/config.h"
@@ -315,6 +316,11 @@ static void output_reinit_now(void) {
 	alsa_controls_rewrite_output();
 	// The DAC back once the real route is live again.
 	alsa_suspend_restore();
+	// Darwin's FPGA is powered down in mem and reloaded with the route: its
+	// filter and NOS are not what was chosen until they are written again.
+	if (alsa_board_is_darwin()) {
+		darwin_reapply();
+	}
 	fprintf(stderr, "audio: output re-init after resume done in %ld ms\n", log_ms() - start);
 }
 
@@ -375,7 +381,7 @@ void audio_park_output_before_suspend(void) {
 	}
 	alsa_wait_output_reinit(); // the last wake's re-init, if still running
 	int x = detect_output();
-	if (x < 1 || x > 3) {
+	if (x < 1 || (x > 3 && x != 7)) {
 		alsa_output_reinit_begin();
 		return; // not one of the analogue sockets
 	}
@@ -2333,6 +2339,20 @@ static int pcm_wait_or_wake(snd_pcm_t *pcm, int timeout_ms) {
 	return (revents & POLLOUT) ? 1 : 0;
 }
 
+// Whether the buffer about to be written to `pcm` gets Darwin's harmonics. The
+// stock player puts them in its analogue output's write and nowhere else: not
+// on the USB-C port, not over Bluetooth. So only on a handle opened as the
+// onboard card, asked of the handle for the reason pcm_is_bluetooth() is. Once
+// a buffer, before the write rather than inside pcm_write_recover(), whose
+// retries would scale a buffer twice.
+static bool harmonic_applies(snd_pcm_t *pcm) {
+	if (!darwin_harmonic_active() || !pcm) {
+		return false;
+	}
+	const char *name = snd_pcm_name(pcm);
+	return name && strcmp(name, AUDIO_DEFAULT_PCM) == 0;
+}
+
 static snd_pcm_sframes_t pcm_write_recover(snd_pcm_t **pcm, const void *buf, snd_pcm_uframes_t frames, int channels,
 										   int rate, int bits, snd_pcm_uframes_t *period) {
 	for (int attempt = 0; attempt < 8; attempt++) {
@@ -3034,6 +3054,15 @@ static void play_wav_file(const char *filepath) {
 				swvolume_apply_s16((short *)buffer, samples);
 			} else {
 				swvolume_apply_s32((int32_t *)buffer, samples);
+			}
+		}
+
+		if (harmonic_applies(pcm_handle)) {
+			int samples = (int)frames_to_write * info.channels;
+			if (info.out_bits == 16) {
+				darwin_harmonic_apply_s16((int16_t *)buffer, samples);
+			} else {
+				darwin_harmonic_apply_s32((int32_t *)buffer, samples);
 			}
 		}
 
@@ -3806,6 +3835,17 @@ static void play_decoded_file(const char *filepath, decode_format_t format) {
 				swvolume_apply_s32((int32_t *)buffer, samples);
 			} else {
 				swvolume_apply_s16((short *)buffer, samples);
+			}
+		}
+
+		// The Darwin harmonics, under the same rule again: a DoP word with its
+		// negative half scaled is not DSD any more.
+		if (!passthrough && harmonic_applies(pcm_handle)) {
+			int samples = (int)frames_read * channels;
+			if (out_bits == 32) {
+				darwin_harmonic_apply_s32((int32_t *)buffer, samples);
+			} else {
+				darwin_harmonic_apply_s16((int16_t *)buffer, samples);
 			}
 		}
 

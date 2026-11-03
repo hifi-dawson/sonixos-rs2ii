@@ -103,6 +103,18 @@ typedef enum {
 	GUI_KEY_PLAY_PAUSE,
 	GUI_KEY_NEXT,
 	GUI_KEY_PREV,
+	// The shortcut actions (keymap.h): pages to open and settings to flip,
+	// which only the GUI thread may do.
+	GUI_KEY_SCREEN_OFF,
+	GUI_KEY_HOME,
+	GUI_KEY_QUEUE,
+	GUI_KEY_NOW_PLAYING,
+	GUI_KEY_DARWIN,
+	GUI_KEY_DARWIN_FILTER,
+	GUI_KEY_NOS,
+	GUI_KEY_HARMONIC,
+	GUI_KEY_KEYS_LOCKED,   // a toast: the buttons were just locked...
+	GUI_KEY_KEYS_UNLOCKED, // ...or unlocked, by the shortcut
 } gui_key_t;
 
 void gui_notify_key(gui_key_t key);

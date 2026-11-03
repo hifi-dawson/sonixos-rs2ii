@@ -6,6 +6,7 @@
 
 #include <ctype.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
@@ -2741,13 +2742,20 @@ static void list_sql(char *sql, size_t size, const char *select, library_list_t 
 	// qualify is a question for MEDIA_TABLE -- answered off media_artist_ctime_idx,
 	// media_album_artist_ctime_idx or media_genre_sort_idx, once, so the subquery is
 	// a lookup and not a scan.
+	//
+	// By name, or by year and then name when the order asks for it: an
+	// artist's records in the order they were made is how a discography reads.
 	if (kind == LIBRARY_LIST_ALBUMS && col && value &&
 		(filter == LIBRARY_FILTER_ARTIST || filter == LIBRARY_FILTER_ALBUM_ARTIST || filter == LIBRARY_FILTER_GENRE)) {
+		const char *by_name = list_uses_sortkey(kind) ? "sortkey" : "album COLLATE listorder";
+		const char *by_year = order == LIBRARY_ORDER_YEAR		? YEAR_KEY_UP(ALBUM_GROUP_YEAR) ", "
+							  : order == LIBRARY_ORDER_YEAR_DESC ? YEAR_KEY_DOWN(ALBUM_GROUP_YEAR) ", "
+																 : "";
 		snprintf(sql, size,
-				 "SELECT %s FROM ALBUM_GROUP_TABLE WHERE album <> ''"
+				 "SELECT %s FROM ALBUM_GROUP_TABLE g WHERE album <> ''"
 				 " AND (album, album_key) IN (SELECT album, album_key FROM MEDIA_TABLE WHERE %s)"
-				 " ORDER BY %s",
-				 select, filter_where(filter), list_uses_sortkey(kind) ? "sortkey" : "album COLLATE listorder");
+				 " ORDER BY %s%s",
+				 select, filter_where(filter), by_year, by_name);
 		return;
 	}
 
@@ -5246,6 +5254,20 @@ typedef struct {
 	bool lists_failed; // memory ran out: nothing is taken out this time
 } walk_t;
 
+// The folders library_rescan_folders() reads again, by their full paths: set
+// before its run is launched and given back by the scan thread at the end of
+// it. Empty for Detect changes.
+static namelist_t forced_folders;
+
+// How far below the card's root a folder is, as update_folder() counts it.
+static int folder_depth(const char *path) {
+	int depth = 0;
+	for (const char *p = path + strlen(scan_root); *p; p++) {
+		depth += *p == '/';
+	}
+	return depth;
+}
+
 static sqlite3_stmt *stmt_under_media;
 static sqlite3_stmt *stmt_under_folders;
 
@@ -5623,6 +5645,118 @@ static bool update_compare(const char *path, bool own_files, const namelist_t *f
 }
 
 // Walks `path` with a scan's rules, comparing the folders that changed.
+// Retagged files are looked at during the walk, each right after its folder is
+// read: the card still has that folder at hand, and a look costs little. A pass
+// of its own afterwards (update_retagged) reads every folder of the card a
+// second time to find the files again -- on a card of a thousand folders, as
+// long as the walk itself. So the walk takes, before it starts, every indexed
+// file and the time it was read at, sorted for looking up.
+typedef struct {
+	char *file;
+	sqlite3_int64 mtime;
+} retag_entry_t;
+static retag_entry_t *retag_index;
+static int retag_count, retag_changed;
+
+static int retag_order(const void *a, const void *b) {
+	return strcmp(((const retag_entry_t *)a)->file, ((const retag_entry_t *)b)->file);
+}
+
+static void retag_index_free(void) {
+	for (int i = 0; i < retag_count; i++) {
+		free(retag_index[i].file);
+	}
+	free(retag_index);
+	retag_index = NULL;
+	retag_count = 0;
+}
+
+// In slices of row ids, so the lock is never held across the whole table. False
+// when it could not be read or memory ran out: the pass of its own then runs.
+static bool retag_index_build(void) {
+	retag_index_free();
+	retag_changed = 0;
+	int capacity = 0;
+	sqlite3_int64 after = 0;
+	bool ok = true;
+	char last[600] = "";
+	while (ok && !scan_cancel) {
+		int n = 0;
+		pthread_mutex_lock(&db_lock);
+		sqlite3_stmt *stmt = NULL;
+		ok = db && sqlite3_prepare_v2(db, "SELECT rowid, path, mtime FROM MEDIA_TABLE WHERE rowid > ?1 ORDER BY rowid LIMIT 256",
+									  -1, &stmt, NULL) == SQLITE_OK;
+		if (ok) {
+			sqlite3_bind_int64(stmt, 1, after);
+			while (ok && sqlite3_step(stmt) == SQLITE_ROW) {
+				n++;
+				after = sqlite3_column_int64(stmt, 0);
+				const char *path = (const char *)sqlite3_column_text(stmt, 1);
+				if (!path || !path[0]) {
+					continue;
+				}
+				// A sheet's tracks, and a WAV's marker tracks, are one file.
+				const char *track = strstr(path, "?track=");
+				size_t len = track ? (size_t)(track - path) : strlen(path);
+				if (len >= sizeof(last) || (strlen(last) == len && strncmp(last, path, len) == 0)) {
+					continue;
+				}
+				snprintf(last, sizeof(last), "%.*s", (int)len, path);
+				if (retag_count == capacity) {
+					int wanted = capacity ? capacity * 2 : 1024;
+					retag_entry_t *grown = realloc(retag_index, (size_t)wanted * sizeof(*grown));
+					if (!grown) {
+						ok = false;
+						break;
+					}
+					retag_index = grown;
+					capacity = wanted;
+				}
+				if (!(retag_index[retag_count].file = strdup(last))) {
+					ok = false;
+					break;
+				}
+				retag_index[retag_count++].mtime = sqlite3_column_int64(stmt, 2);
+			}
+			sqlite3_finalize(stmt);
+		}
+		pthread_mutex_unlock(&db_lock);
+		if (n == 0) {
+			break;
+		}
+	}
+	if (!ok || scan_cancel) {
+		retag_index_free();
+		return false;
+	}
+	qsort(retag_index, (size_t)retag_count, sizeof(*retag_index), retag_order);
+	return true;
+}
+
+// The indexed files of a folder just read whose time is not the one they were
+// read at: read again with the rest of what the walk found.
+static void retag_look(const char *path, DIR *dir, const namelist_t *files, walk_t *w) {
+	for (int i = 0; i < files->count && !w->full && !scan_cancel; i++) {
+		retag_entry_t key = {.file = NULL};
+		char file[600];
+		if (snprintf(file, sizeof(file), "%s/%s", path, files->names[i]) >= (int)sizeof(file)) {
+			continue;
+		}
+		key.file = file;
+		const retag_entry_t *known = bsearch(&key, retag_index, (size_t)retag_count, sizeof(key), retag_order);
+		struct stat st;
+		if (!known || fstatat(dirfd(dir), files->names[i], &st, 0) != 0 || (sqlite3_int64)st.st_mtime == known->mtime ||
+			namelist_has(&w->reread, file)) {
+			continue; // a new file is the compare's to find
+		}
+		if (walk_pending(w) >= SCAN_MAX_SUBDIRS || !namelist_add(&w->reread, file)) {
+			w->full = true;
+			return;
+		}
+		retag_changed++;
+	}
+}
+
 static void update_folder(const char *path, int depth, walk_t *w) {
 	if (scan_cancel || depth > SCAN_MAX_DEPTH) {
 		return;
@@ -5715,12 +5849,15 @@ static void update_folder(const char *path, int depth, walk_t *w) {
 	// A read that failed partway, or names that did not all fit, is not the
 	// folder: comparing it would take the unread names for missing files.
 	bool readable = errno == 0 && !overflow;
+	if (readable && retag_index && !scan_cancel) {
+		retag_look(path, dir, &files, w);
+	}
 	closedir(dir);
 
 	if (overflow) {
 		printf("library: %s holds more than %d tracks; Detect changes leaves it to a scan\n", path, SCAN_MAX_SUBDIRS);
 	}
-	if (readable && !scan_cancel && !folder_unchanged(path, &sig)) {
+	if (readable && !scan_cancel && (forced_folders.count > 0 || !folder_unchanged(path, &sig))) {
 		bool complete = update_compare(path, !(depth == 0 && scan_folder_count > 0), &files, &dirs, dirs_listed, w);
 		if (complete && !w->full) {
 			walk_note(w, path, dir_st.st_mtime, &sig);
@@ -5753,10 +5890,15 @@ static void update_folder(const char *path, int depth, walk_t *w) {
 
 // Whether a track's path lies in what the walk covered: the whole card, or the
 // chosen folders. Case-blind, as the card is.
+static bool under_folders(const namelist_t *folders, const char *path);
+
 static bool in_walked_folders(const char *path) {
 	size_t root_len = strlen(scan_root);
 	if (strncmp(path, scan_root, root_len) != 0 || path[root_len] != '/') {
 		return false;
+	}
+	if (forced_folders.count > 0) {
+		return under_folders(&forced_folders, path);
 	}
 	if (scan_folder_count == 0) {
 		return true;
@@ -5871,6 +6013,7 @@ static void update_retagged(walk_t *w) {
 	typedef struct {
 		sqlite3_int64 rowid;
 		sqlite3_int64 mtime;
+		sqlite3_int64 id;
 		char path[600];
 	} slice_row_t;
 	slice_row_t *slice = malloc(RETAG_SLICE * sizeof(*slice));
@@ -5885,7 +6028,7 @@ static void update_retagged(walk_t *w) {
 		int n = 0;
 		pthread_mutex_lock(&db_lock);
 		sqlite3_stmt *stmt = NULL;
-		if (db && sqlite3_prepare_v2(db, "SELECT rowid, path, mtime FROM MEDIA_TABLE WHERE rowid > ?1 ORDER BY rowid LIMIT ?2",
+		if (db && sqlite3_prepare_v2(db, "SELECT rowid, path, mtime, id FROM MEDIA_TABLE WHERE rowid > ?1 ORDER BY rowid LIMIT ?2",
 									 -1, &stmt, NULL) == SQLITE_OK) {
 			sqlite3_bind_int64(stmt, 1, after);
 			sqlite3_bind_int(stmt, 2, RETAG_SLICE);
@@ -5893,6 +6036,7 @@ static void update_retagged(walk_t *w) {
 				const char *path = (const char *)sqlite3_column_text(stmt, 1);
 				slice[n].rowid = sqlite3_column_int64(stmt, 0);
 				slice[n].mtime = sqlite3_column_int64(stmt, 2);
+				slice[n].id = sqlite3_column_int64(stmt, 3);
 				snprintf(slice[n].path, sizeof(slice[n].path), "%s", path ? path : "");
 				n++;
 			}
@@ -5919,8 +6063,14 @@ static void update_retagged(walk_t *w) {
 			}
 			snprintf(last_file, sizeof(last_file), "%s", file);
 
+			// In folders read again every file is changed -- once: the rows
+			// this run wrote are the ones past scan_id_base.
+			bool forced = forced_folders.count > 0;
+			if (forced && slice[i].id > scan_id_base) {
+				continue;
+			}
 			struct stat st;
-			bool changed = stat(file, &st) == 0 && (sqlite3_int64)st.st_mtime != slice[i].mtime;
+			bool changed = stat(file, &st) == 0 && (forced || (sqlite3_int64)st.st_mtime != slice[i].mtime);
 			if (!changed || namelist_has(&w->reread, file)) {
 				continue;
 			}
@@ -6303,8 +6453,12 @@ static int update_added, update_removed, update_replaced;
 
 static void update_run(void) {
 	uint32_t started_ms = now_ms();
-	printf("library: looking for changes in %s%s\n", scan_root,
-		   scan_folder_count > 0 ? " (the chosen folders)" : "");
+	if (forced_folders.count > 0) {
+		printf("library: reading %d folder(s) of %s again\n", forced_folders.count, scan_root);
+	} else {
+		printf("library: looking for changes in %s%s\n", scan_root,
+			   scan_folder_count > 0 ? " (the chosen folders)" : "");
+	}
 	pthread_mutex_lock(&db_lock);
 	if (!prepare_statements() || !prepare_known()) {
 		fprintf(stderr, "library: cannot look for changes, the database is not answering\n");
@@ -6324,15 +6478,31 @@ static void update_run(void) {
 	while (!scan_cancel) {
 		walk_t walk;
 		walk_init(&walk);
-		update_folder(scan_root, 0, &walk);
+		bool retag_walk = rules.retagged && forced_folders.count == 0 && retag_index_build();
+		if (forced_folders.count > 0) {
+			for (int i = 0; i < forced_folders.count && !scan_cancel && !walk.full; i++) {
+				const char *folder = forced_folders.names[i];
+				struct stat st;
+				if (stat(folder, &st) != 0 || !S_ISDIR(st.st_mode)) {
+					namelist_add(&walk.gone_folders, folder); // and its rows with it
+				} else {
+					update_folder(folder, folder_depth(folder), &walk);
+				}
+			}
+		} else {
+			update_folder(scan_root, 0, &walk);
+		}
 		if (walk.root_failed) {
 			printf("library: %s cannot be read; nothing looked at\n", scan_root);
 			walk_free(&walk);
 			break;
 		}
-		if (rules.retagged && !scan_cancel) {
+		if ((forced_folders.count > 0 || (rules.retagged && !retag_walk)) && !scan_cancel) {
 			update_retagged(&walk);
+		} else if (retag_walk && retag_changed > 0) {
+			printf("library: %d indexed file(s) changed since they were read\n", retag_changed);
 		}
+		retag_index_free();
 		// A walk that saw an empty card is not written down either, or the
 		// next one would take the empty card for the one to compare against.
 		bool refused = false;
@@ -6579,6 +6749,7 @@ static void *scan_thread_func(void *arg) {
 		if (update_outcome == LIBRARY_UPDATE_FINISHED && !scan_cancel && !scan_db_failed) {
 			playlists_follow_library();
 		}
+		namelist_free(&forced_folders);
 		break;
 	case SCAN_REORGANIZE:
 		break;
@@ -6664,6 +6835,33 @@ static bool scan_launch(const char *root, scan_mode_t mode) {
 	return true;
 }
 
+bool library_clear(void) {
+	if (!db || scan_running) {
+		return false;
+	}
+	// What full_scan_run() empties, and the count with it, in one go.
+	static const char *const tables[] = {"MEDIA_TABLE",  "ALBUM_TABLE", "ALBUM_GROUP_TABLE",  "ARTIST_TABLE",
+										 "ALBUM_ARTIST_TABLE", "GENRE_TABLE", "ARTIST_LINK", "ALBUM_ARTIST_LINK",
+										 "GENRE_LINK",   "FOLDER_TABLE", "CUE_STATE",   "COUNT_TABLE"};
+	pthread_mutex_lock(&db_lock);
+	bool ok = exec("BEGIN");
+	for (size_t i = 0; ok && i < sizeof(tables) / sizeof(tables[0]); i++) {
+		char sql[64];
+		snprintf(sql, sizeof(sql), "DELETE FROM %s", tables[i]);
+		ok = exec(sql);
+	}
+	ok = ok && exec("INSERT INTO COUNT_TABLE(cn) VALUES(0)") && exec("COMMIT");
+	if (!ok) {
+		exec("ROLLBACK");
+	}
+	// As after a scan's emptying: whatever held the row ids points at nothing.
+	bump_generation(GEN_MEDIA);
+	sqlite3_db_release_memory(db);
+	pthread_mutex_unlock(&db_lock);
+	printf("library: %s\n", ok ? "cleared" : "not cleared: the database refused; left as it was");
+	return ok;
+}
+
 bool library_scan_start(const char *root) {
 	if (scan_running && scan_mode != SCAN_FULL) {
 		library_scan_stop_and_wait();
@@ -6731,7 +6929,8 @@ void library_set_detect_changes(bool on) {
 
 void library_set_update_listener(library_update_listener_t listener) { update_listener = listener; }
 
-bool library_card_returned(const char *root) {
+// Detect changes, when the setting is on or the run is `asked` for.
+static bool card_update(const char *root, bool asked) {
 	if (!library_is_open() || scan_running) {
 		return false;
 	}
@@ -6739,7 +6938,7 @@ bool library_card_returned(const char *root) {
 	// run stopped halfway -- is filed again: on its own, or after Detect
 	// changes.
 	bool unfiled = !organized_as_set();
-	if (!library_detect_changes()) {
+	if (!asked && !library_detect_changes()) {
 		return unfiled && library_organize_check();
 	}
 	if (library_track_count() == 0) {
@@ -6763,6 +6962,28 @@ bool library_card_returned(const char *root) {
 		if (update_listener) {
 			update_listener(LIBRARY_UPDATE_STOPPED, 0, 0, 0);
 		}
+		return false;
+	}
+	return true;
+}
+
+bool library_card_returned(const char *root) { return card_update(root, false); }
+
+bool library_detect_changes_now(const char *root) { return card_update(root, true); }
+
+bool library_rescan_folders(const char *root, const char *const *folders, int count) {
+	if (!library_is_open() || scan_running || count <= 0) {
+		return false;
+	}
+	namelist_free(&forced_folders);
+	for (int i = 0; i < count; i++) {
+		if (!folders[i] || !folders[i][0] || !namelist_add(&forced_folders, folders[i])) {
+			namelist_free(&forced_folders);
+			return false;
+		}
+	}
+	if (!card_update(root, true)) {
+		namelist_free(&forced_folders);
 		return false;
 	}
 	return true;

@@ -8,6 +8,7 @@
 #include "src/gui/shell/switcher.h"
 #include "src/gui/shell/theme.h"
 #include "src/system/bluetooth/btlog.h"
+#include "src/system/device/sysinfo.h"
 #include "src/system/device/adb.h"
 #include "src/system/core/lang.h"
 #include "src/system/library/library.h"
@@ -98,6 +99,9 @@ static void update_log_row(void) {
 }
 
 static void update_bt_log_row(void) {
+	if (!bt_log_switch) {
+		return; // no row on a player without Bluetooth
+	}
 	bool on = btlog_enabled();
 	show_path(bt_log_switch, bt_log_name_label, bt_log_path_label, on, on ? btlog_path() : "");
 }
@@ -188,10 +192,13 @@ void devoptions_init(gui_config_t *cfg) {
 
 	// A file of its own, so it works with the log above off and is the one
 	// thing to send about a device that will not connect.
-	lv_obj_t *bt_card = settingsrow_toggle(container, "devoptions_bluetooth_log", &bt_log_switch, bt_log_toggled_cb);
-	bt_log_name_label = lv_obj_get_child(bt_card, 0);
-	bt_log_path_label = add_path_label(bt_card);
-	add_note(container, "devoptions_bluetooth_log_note");
+	const sysinfo_model_t *model = sysinfo_model();
+	if (!(model && model->no_wireless)) { // no Bluetooth, nothing to log
+		lv_obj_t *bt_card = settingsrow_toggle(container, "devoptions_bluetooth_log", &bt_log_switch, bt_log_toggled_cb);
+		bt_log_name_label = lv_obj_get_child(bt_card, 0);
+		bt_log_path_label = add_path_label(bt_card);
+		add_note(container, "devoptions_bluetooth_log_note");
+	}
 
 	// Opens the page showing RAM and running processes. A navigation row with a
 	// chevron, like the developer options entry on the previous page.

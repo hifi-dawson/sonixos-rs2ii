@@ -17,6 +17,7 @@
 #include "src/system/core/lang.h"
 #include "src/system/device/power.h"
 #include "src/system/net/wifi.h"
+#include "src/system/device/sysinfo.h"
 
 #define TIMESET_YEAR_FIRST 2025
 #define TIMESET_YEAR_LAST 2044
@@ -1081,7 +1082,13 @@ void timeset_init(gui_config_t *cfg) {
 	// user's at all.
 	tabbar_create(&mode_tabs, content);
 	tabbar_add(&mode_tabs, "timeset_manual", mode_pick_cb, (void *)(intptr_t)MODE_MANUAL);
-	tabbar_add(&mode_tabs, "timeset_automatic", mode_pick_cb, (void *)(intptr_t)MODE_AUTOMATIC);
+	// Automatic asks the network for the time: not on a player without one.
+	const sysinfo_model_t *model = sysinfo_model();
+	if (model && model->no_wireless) {
+		clock_set_auto(false); // on unless switched off, and here nothing could switch it off
+	} else {
+		tabbar_add(&mode_tabs, "timeset_automatic", mode_pick_cb, (void *)(intptr_t)MODE_AUTOMATIC);
+	}
 
 	auto_status = lv_label_create(content);
 	lv_label_set_long_mode(auto_status, LV_LABEL_LONG_WRAP);

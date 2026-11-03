@@ -143,6 +143,49 @@ bool alsa_board_is_cs43131(void) {
 	return answer != 0;
 }
 
+// ---------------------------------------------------------------------------
+// The RS2 II's audio board
+//
+// Darwin: an R2R ladder behind an FPGA (the HM200, see darwin.h) and an
+// NJU72315 volume chip after it, a 3.5 mm and a 4.4 mm socket. No codec, so
+// none of "Digital Filter", "NOS_EN" or "DRE_EN": the filter and NOS are the
+// FPGA's and go through darwin.c. Its sound card
+// (x1600_hiby_rs2ii_sound_card.ko) has six controls -- "Output Port Switch",
+// the two "Playback Volume", "DOP_EN", "DSD Gain" and "Gain Mode" -- and no
+// "Balance Lineout En".
+//
+// The volume is the other way up from the CS43198's: 0 is the quietest, and
+// the stock player counts 0..50 on its screen and writes that number to the
+// card as it is (read on a unit: 23 shown, 23 in the control). The control
+// goes on to 100, which stock never uses. The gain moves on "Gain Mode"
+// rather than by a table.
+//
+// Not yet checked on a unit: which values "Gain Mode" takes, and whether the
+// card numbers its routes as the R3 Pro II's does. The diagnostic page's
+// control list answers both.
+// ---------------------------------------------------------------------------
+
+bool alsa_board_is_darwin(void) {
+	static int answer = -1;
+	if (answer < 0) {
+		const sysinfo_model_t *model = sysinfo_model();
+		answer = model ? model->darwin : 0;
+	}
+	return answer != 0;
+}
+
+int volume_shown(int percent) {
+	if (percent < 0) {
+		percent = 0;
+	}
+	if (percent > 100) {
+		percent = 100;
+	}
+	return alsa_board_is_darwin() ? (percent + 1) / 2 : percent;
+}
+
+int volume_step_scale(void) { return alsa_board_is_darwin() ? 2 : 1; }
+
 static bool lineout_on;
 static int lineout_saved_percent = -1;
 static int lineout_jack; // the jack the mode was switched on for
@@ -199,7 +242,9 @@ static const int HIBY_HW_HDB[101] = {
 	10,  9,   8,   7,   6,   5,   4,   3,   2,   1,     //
 	0};
 
-static long percent_to_raw(int percent) {
+// The CS43198 curves, whichever board this is: they are also the law a device
+// on the USB-C port follows (alsa_volume_gain_db100).
+static long cs_curve_raw(int percent) {
 	if (percent < 0) {
 		percent = 0;
 	}
@@ -209,12 +254,24 @@ static long percent_to_raw(int percent) {
 	return high_gain ? HIBY_HW_HDB[percent] : HIBY_HW_MDB[percent];
 }
 
+// What goes into "Playback Volume" for an index. On Darwin half of it: the
+// stock player counts 0..50 and writes that number to the card as it is
+// (read on a unit: 23 on the screen, 23 in the control), and its top, 50, is
+// the top here. The control runs on to 100, but that is louder than stock
+// ever goes and not a scale the owner knows.
+static long percent_to_raw(int percent) {
+	if (alsa_board_is_darwin()) {
+		return volume_shown(percent);
+	}
+	return cs_curve_raw(percent);
+}
+
 long alsa_volume_gain_db100(int percent) {
 	if (percent <= 0) {
 		return ALSA_VOLUME_MUTE_DB100;
 	}
 	// One raw step of the CS43198 is 0.5 dB.
-	return -percent_to_raw(percent) * 50;
+	return -cs_curve_raw(percent) * 50;
 }
 
 
@@ -382,8 +439,13 @@ int detect_output(void) {
 	// Line out rides the jack that is plugged in: the balanced hole keeps route
 	// 3 and is told apart by the flag, the 3.5 mm one moves from 2 to 1. With
 	// nothing plugged in the 3.5 mm route is the default here as well.
+	//
+	// Darwin's card has no flag: its balanced line out is a route of its own,
+	// 7, from its driver's switch (1 lineout, 2 headset, 3 balance, 4 spdif,
+	// 7 balance lineout; 0, 5 and 6 are "none", and 5 is where the stock
+	// player parks the card between tracks).
 	if (lineout_on) {
-		return balanced ? 3 : 1;
+		return balanced ? (alsa_board_is_darwin() ? 7 : 3) : 1;
 	}
 
 	if (balanced) {
@@ -397,8 +459,15 @@ int detect_output(void) {
 	return 2; // Default to 3.5mm device
 }
 
-// See alsa-controls.h. Two sockets: {1, 2} single-ended and {3} balanced.
-int output_reinit_partner(int route) { return route == 3 ? 2 : 3; }
+// See alsa-controls.h. Two sockets: {1, 2} single-ended and {3, 7} balanced.
+// Darwin has a "none" route, 5, which is the stock player's own parking place
+// and leaves nothing driving either socket.
+int output_reinit_partner(int route) {
+	if (alsa_board_is_darwin()) {
+		return 5;
+	}
+	return route == 3 ? 2 : 3;
+}
 
 // True when the balanced line out is what the route should be carrying: the
 // flag the machine driver reads while applying route 3.
@@ -418,8 +487,8 @@ int alsa_output_key(void) { return detect_output() * 2 + (want_balance_lineout()
 static int current_filter = -1;
 
 void set_dac_filter(int filter) {
-	if (filter < 0 || filter > 3) {
-		return;
+	if (filter < 0 || filter > 3 || alsa_board_is_darwin()) {
+		return; // Darwin's filters are the FPGA's: darwin.c
 	}
 	if (filter == current_filter) {
 		return; // same reasoning as the output switch: never poke it idly
@@ -436,15 +505,17 @@ int get_dac_filter(void) { return current_filter < 0 ? 0 : current_filter; }
 // filter and the output route: never poke the codec idly mid-stream.
 static int current_dre = -1;
 
-// DRE does not exist on the CS43131 board: it stays off there and nothing is
-// written.
+// DRE does not exist on the CS43131 board or on Darwin: it stays off there and
+// nothing is written.
+static bool board_has_dre(void) { return !alsa_board_is_cs43131() && !alsa_board_is_darwin(); }
+
 void set_dac_dre(int enabled) {
-	enabled = enabled && !alsa_board_is_cs43131() ? 1 : 0;
+	enabled = enabled && board_has_dre() ? 1 : 0;
 	if (enabled == current_dre) {
 		return;
 	}
 	current_dre = enabled;
-	if (alsa_board_is_cs43131()) {
+	if (!board_has_dre()) {
 		return;
 	}
 	alsa_set_control("DRE_EN", enabled);
@@ -452,7 +523,7 @@ void set_dac_dre(int enabled) {
 }
 
 int get_dac_dre(void) {
-	if (alsa_board_is_cs43131()) {
+	if (!board_has_dre()) {
 		return 0;
 	}
 	return current_dre < 0 ? 1 : current_dre;
@@ -464,8 +535,8 @@ static int current_nos = -1;
 
 void set_dac_nos(int enabled) {
 	enabled = enabled ? 1 : 0;
-	if (enabled == current_nos) {
-		return;
+	if (enabled == current_nos || alsa_board_is_darwin()) {
+		return; // Darwin's NOS is the FPGA's: darwin.c
 	}
 	current_nos = enabled;
 	alsa_set_control("NOS_EN", enabled);
@@ -521,7 +592,9 @@ static int dsd_gain_index; // 0..6; 0 is no compensation at all
 // offset while a DoP stream is open. Off the DoP path this returns `raw`
 // untouched, so nothing changes for PCM.
 static long with_dsd_gain(long raw) {
-	if (current_dop != 1 || dsd_gain_index <= 0) {
+	// Darwin's register runs the other way and the card has a "DSD Gain" of its
+	// own, whose scale is not known yet: no compensation there until it is.
+	if (current_dop != 1 || dsd_gain_index <= 0 || alsa_board_is_darwin()) {
 		return raw;
 	}
 
@@ -567,8 +640,11 @@ void alsa_suspend_mute(void) {
 		return;
 	}
 #ifndef HOST_BUILD
-	alsa_set_control("Right Playback Volume", 255);
-	alsa_set_control("Left Playback Volume", 255);
+	// Silence is the top of the CS43198's attenuation and the bottom of Darwin's
+	// volume.
+	long silent = alsa_board_is_darwin() ? 0 : 255;
+	alsa_set_control("Right Playback Volume", silent);
+	alsa_set_control("Left Playback Volume", silent);
 	usleep(30 * 1000); // the codec's own volume ramp
 #endif
 	suspend_muted = true;
@@ -746,7 +822,12 @@ void auto_set_output(void) {
 	// route: on the balanced jack the pair is what decides headphone or line
 	// out. Written even for the 3.5 mm route, so that coming back to the
 	// balanced hole cannot find a stale 1 still set.
-	if (flag_changed) {
+	//
+	// Darwin's card has no such flag. Its line out is the fixed level alone,
+	// on whichever socket is in use.
+	if (alsa_board_is_darwin()) {
+		flag_changed = false;
+	} else if (flag_changed) {
 		if (alsa_set_control("Balance Lineout En", flag) < 0) {
 			// The cache must never claim a write that did not happen: the next
 			// call would skip it and the driver would read the old flag while
@@ -789,9 +870,10 @@ void alsa_controls_rewrite_output(void) {
 	int output = detect_output();
 	int flag = (lineout_on && output == 3) ? 1 : 0;
 
-	// The flag first: the driver reads it while applying route 3.
+	// The flag first: the driver reads it while applying route 3. Darwin has
+	// none.
 	current_balance_lineout = -1;
-	if (alsa_set_control("Balance Lineout En", flag) >= 0) {
+	if (!alsa_board_is_darwin() && alsa_set_control("Balance Lineout En", flag) >= 0) {
 		current_balance_lineout = flag;
 	}
 	current_output = -1;
@@ -1080,7 +1162,9 @@ static void apply_volume_hw(int percent) {
 	// value in this line does not follow from the index and the gain table and
 	// the next person reading a log has no way to tell why. On stderr for that
 	// same reason -- see the note in alsa_set_dsd_gain_index().
-	if (current_dop == 1 && dsd_gain_index > 0) {
+	if (alsa_board_is_darwin()) {
+		printf("set volume to %d (raw %ld of 50)\n", volume_shown(percent), current_volume);
+	} else if (current_dop == 1 && dsd_gain_index > 0) {
 		fprintf(stderr, "set volume to %d%% (raw %ld, -%.1f dB, dsd +%d dB)\n", percent, current_volume,
 				current_volume * 0.5, dsd_gain_index);
 	} else {
@@ -1205,6 +1289,9 @@ void set_high_gain(int enabled) {
 	}
 	high_gain = enabled;
 	printf("set gain to %s\n", enabled ? "high" : "low");
+	// On Darwin this picks nothing: the gain is the card's three-position
+	// "Gain Mode", set from darwin.c, and the volume index goes to the card as
+	// it is. The switch is not shown there.
 	// The gain is which of the two tables the index is read from, so the level
 	// has to be applied again either way -- including in line out, where
 	// set_volume_percent refuses and the fixed index is the one to rewrite.

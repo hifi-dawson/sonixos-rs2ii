@@ -41,6 +41,7 @@
 #include "src/system/core/lang.h"
 #include "src/system/library/library.h"
 #include "src/system/library/lrclib.h"
+#include "src/system/device/sysinfo.h"
 #include "src/system/library/lyrics.h"
 #include "src/system/device/led.h"
 #include "src/system/playback/playlist.h"
@@ -1797,6 +1798,11 @@ static void lyrics_find_sync(bool full) {
 	// The ink of the names beside it: white over the blurred sleeve, the
 	// theme's own over the page's background.
 	lv_obj_set_style_image_recolor(lyrics_find_icon, lyrics_backdrop() ? lv_color_white() : theme()->text_primary, 0);
+	// The button looks the words up online: not on a player without a radio.
+	const sysinfo_model_t *model = sysinfo_model();
+	if (model && model->no_wireless) {
+		return;
+	}
 	lv_obj_set_hidden(lyrics_find_btn, false);
 	lv_obj_move_foreground(lyrics_find_btn);
 }
@@ -2225,6 +2231,11 @@ static void lyrics_find_cb(lv_event_t *e) {
 static void lyrics_offer_download(void) {
 	if (lyrics_fetching) {
 		toast_busy_dismissable("lyrics_downloading");
+		return;
+	}
+	// No radio, no LRCLIB: the swipe finds nothing and says nothing.
+	const sysinfo_model_t *model = sysinfo_model();
+	if (model && model->no_wireless) {
 		return;
 	}
 	if (lyrics_offer_wifi()) {

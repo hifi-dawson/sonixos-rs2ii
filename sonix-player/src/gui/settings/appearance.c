@@ -7,6 +7,8 @@
 #include "src/gui/fonts/fonts.h"
 #include "src/gui/nowplaying/player.h"
 #include "src/gui/settings/bootlogopage.h"
+#include "src/gui/settings/homescreen.h"
+#include "src/gui/settings/themepage.h"
 #include "src/gui/shell/corners.h"
 #include "src/gui/shell/settingsrow.h"
 #include "src/gui/shell/switcher.h"
@@ -20,7 +22,9 @@ lv_obj_t *appearance_screen;
 static lv_obj_t *btn_dark;
 static lv_obj_t *btn_light;
 static lv_obj_t *btn_clock[4]; // left / centre / right / hidden
-static lv_obj_t *btn_accent[THEME_ACCENT_COUNT]; // the coloured circles
+// The coloured circles: the pack's own accent first, then the six presets.
+// Indexed by accent + 1, THEME_ACCENT_PACK being -1.
+static lv_obj_t *btn_accent[THEME_ACCENT_COUNT + 1];
 static lv_obj_t *tint_toggle;
 static lv_obj_t *battery_percent_toggle;
 static lv_obj_t *statusbar_always_toggle;
@@ -95,17 +99,18 @@ static void refresh_buttons(void) {
 // The active circle wears a ring in the text colour; the rest sit flat.
 static void refresh_accent_buttons(void) {
 	int active_accent = theme_get_accent();
-	for (int i = 0; i < THEME_ACCENT_COUNT; i++) {
-		if (!btn_accent[i]) {
+	for (int i = THEME_ACCENT_PACK; i < THEME_ACCENT_COUNT; i++) {
+		lv_obj_t *btn = btn_accent[i + 1];
+		if (!btn) {
 			continue;
 		}
-		lv_obj_set_style_bg_color(btn_accent[i], theme_accent_preset(i), 0);
+		lv_obj_set_style_bg_color(btn, theme_accent_preset(i), 0);
 		if (i == active_accent) {
-			lv_obj_set_style_border_width(btn_accent[i], 3, 0);
-			lv_obj_set_style_border_color(btn_accent[i], theme()->text_primary, 0);
-			lv_obj_set_style_border_opa(btn_accent[i], LV_OPA_COVER, 0);
+			lv_obj_set_style_border_width(btn, 3, 0);
+			lv_obj_set_style_border_color(btn, theme()->text_primary, 0);
+			lv_obj_set_style_border_opa(btn, LV_OPA_COVER, 0);
 		} else {
-			lv_obj_set_style_border_width(btn_accent[i], 0, 0);
+			lv_obj_set_style_border_width(btn, 0, 0);
 		}
 	}
 }
@@ -227,6 +232,9 @@ void appearance_init(gui_config_t *cfg) {
 	btn_dark = make_choice(row, "appearance_dark", true);
 	btn_light = make_choice(row, "appearance_light", false);
 
+	// The pack the two come from: Classic, Midnight, or one from the card.
+	settingsrow_add(container, "appearance_theme_pack", NULL, switch_screen_cb, themepage_screen);
+
 	// A second card: where the clock sits in the status bar.
 	lv_obj_t *clock_card = lv_obj_create(container);
 	lv_obj_set_width(clock_card, lv_pct(100));
@@ -295,8 +303,9 @@ void appearance_init(gui_config_t *cfg) {
 	lv_obj_set_flex_flow(accent_row, LV_FLEX_FLOW_ROW);
 	lv_obj_set_flex_align(accent_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-	for (int i = 0; i < THEME_ACCENT_COUNT; i++) {
-		btn_accent[i] = make_accent_circle(accent_row, i);
+	// The pack's own accent first: it is the one the pack was drawn with.
+	for (int i = THEME_ACCENT_PACK; i < THEME_ACCENT_COUNT; i++) {
+		btn_accent[i + 1] = make_accent_circle(accent_row, i);
 	}
 
 	// Straight under the accent, because it is what the tint is made from: the
@@ -316,6 +325,9 @@ void appearance_init(gui_config_t *cfg) {
 	// The picture shown while the player boots, which follows the theme and
 	// the accent unless one of the user's own is chosen.
 	settingsrow_add(container, "bootlogo", NULL, switch_screen_cb, bootlogopage_screen);
+
+	// Which tiles the main menu shows, and which the More page.
+	settingsrow_add(container, "home_screen", NULL, switch_screen_cb, homescreen_screen);
 
 	// How big the small text on every page is: the secondary lines, notes,
 	// clocks and counters. See fonts.c for which sizes grow and by how much.

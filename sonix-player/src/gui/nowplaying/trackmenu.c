@@ -20,6 +20,7 @@
 #include "src/gui/shell/switcher.h"
 #include "src/gui/shell/theme.h"
 #include "src/gui/shell/toast.h"
+#include "src/gui/shell/confirm.h"
 #include "src/gui/nowplaying/cover.h"
 #include "src/system/audio/audio.h"
 #include "src/system/audio/replaygain.h"
@@ -282,8 +283,9 @@ static void queue_mode_show(void) {
 	} else if (glyph) {
 		lv_obj_remove_local_style_prop(glyph, LV_STYLE_IMAGE_RECOLOR, 0);
 	}
-	// The bin is there from the start, faded until something is chosen.
-	lv_obj_set_style_opa(queue_remove_btn, queue_chosen_count > 0 ? LV_OPA_COVER : LV_OPA_40, 0);
+	// The bin is there from the start: with rows chosen it takes them out, with
+	// none it offers to clear the whole queue, so it is never faded.
+	lv_obj_set_style_opa(queue_remove_btn, LV_OPA_COVER, 0);
 
 	settingsrow_title_corner_slots(queue_title, g_cfg, idle || select ? 2 : (reorder ? 1 : 0));
 	queue_paint_rows();
@@ -1102,9 +1104,28 @@ static void queue_row_long_cb(lv_event_t *e) {
 	queue_drag_start(row, button, point);
 }
 
+// The bin with nothing chosen: the whole queue, after asking. The track playing
+// finishes on its own; nothing follows it.
+static void queue_clear_confirmed_cb(void *user) {
+	(void)user;
+	playlist_clear();
+	device_state_queue_changed();
+	queue_mode_set(QUEUE_IDLE);
+	toast_success("queue_cleared");
+	queue_layout();
+	queue_window_update();
+	queue_mode_show();
+}
+
 static void queue_remove_cb(lv_event_t *e) {
 	(void)e;
-	if (queue_mode != QUEUE_SELECT || queue_chosen_count == 0) {
+	if (queue_mode != QUEUE_SELECT) {
+		return;
+	}
+	if (queue_chosen_count == 0) {
+		if (queue_total > 0) {
+			confirm_show("queue_clear_title", "queue_clear_note", "queue_clear", queue_clear_confirmed_cb, NULL);
+		}
 		return;
 	}
 	int *indices = malloc((size_t)queue_chosen_count * sizeof(*indices));

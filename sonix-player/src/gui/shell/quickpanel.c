@@ -8,6 +8,9 @@
 #include "src/gui/shell/confirm.h"
 #include "src/gui/fonts/fonts.h"
 #include "src/gui/shell/gui.h"
+#include "src/gui/shell/main_menu.h"
+#include "src/gui/nowplaying/trackmenu.h"
+#include "src/system/device/sysinfo.h"
 #include "src/gui/shell/icons.h"
 #include "src/gui/settings/musicsettings.h"
 #include "src/gui/audio/peqpage.h"
@@ -31,6 +34,7 @@
 #include "src/gui/wireless/wifisettings.h"
 #include "src/system/remote/airplay.h"
 #include "src/system/audio/alsa-controls.h"
+#include "src/system/audio/darwin.h"
 #include "src/system/bluetooth/bluetooth.h"
 #include "src/system/core/config.h"
 #include "src/system/playback/device_state.h"
@@ -95,6 +99,8 @@ static lv_obj_t *sleep_music_btn;
 static lv_obj_t *sleep_audiobook_btn;
 static lv_obj_t *sleep_podcast_btn;
 static lv_obj_t *wifi_transfer_btn;
+static lv_obj_t *home_btn;
+static lv_obj_t *queue_btn;
 static lv_obj_t *gapless_btn;
 
 // ---------------------------------------------------------------------------
@@ -130,6 +136,8 @@ static const char *const button_key[QP_BTN_COUNT] = {
 	[QP_BTN_SLEEP_PODCAST] = "sleep_podcast",
 	[QP_BTN_WIFI_TRANSFER] = "wifi_transfer",
 	[QP_BTN_GAPLESS] = "gapless",
+	[QP_BTN_HOME] = "home",
+	[QP_BTN_QUEUE] = "queue",
 };
 
 static const char *const button_tag[QP_BTN_COUNT] = {
@@ -149,6 +157,8 @@ static const char *const button_tag[QP_BTN_COUNT] = {
 	[QP_BTN_SLEEP_PODCAST] = "quickpanel_sleep_podcast",
 	[QP_BTN_WIFI_TRANSFER] = "wifitransfer_title",
 	[QP_BTN_GAPLESS] = "musicsettings_gapless_playback",
+	[QP_BTN_HOME] = "quickpanel_home",
+	[QP_BTN_QUEUE] = "trackmenu_queue",
 };
 
 static uint8_t slots[QP_SLOT_COUNT];  // the grid, QP_BTN_NONE where it is empty
@@ -965,6 +975,18 @@ static void star_cb(lv_event_t *e) {
 // list. A truncated or hand-mangled setting therefore costs the names it
 // mangled and nothing else. "-" is kept as an empty place, which is how the
 // grid's gaps survive a restart.
+// The buttons a player can have at all. Without a radio (the RS2 II) the ones
+// that switch one on or need one are not offered, in the panel or in the
+// settings page's lists; a saved layout that names them loses them.
+static bool button_available(int button) {
+	const sysinfo_model_t *model = sysinfo_model();
+	if (!(model && model->no_wireless)) {
+		return true;
+	}
+	return button != QP_BTN_WIFI && button != QP_BTN_BLUETOOTH && button != QP_BTN_AIRPLAY &&
+		   button != QP_BTN_SONIXLINK && button != QP_BTN_DLNA && button != QP_BTN_WIFI_TRANSFER;
+}
+
 static uint8_t parse_list(const char *saved, uint8_t *out, uint8_t cap, bool *placed) {
 	uint8_t n = 0;
 	const char *p = saved ? saved : "";
@@ -986,7 +1008,7 @@ static uint8_t parse_list(const char *saved, uint8_t *out, uint8_t cap, bool *pl
 			continue;
 		}
 		for (int i = 0; i < QP_BTN_COUNT && len; i++) {
-			if (placed[i] || strlen(button_key[i]) != len || strncmp(button_key[i], start, len) != 0) {
+			if (placed[i] || !button_available(i) || strlen(button_key[i]) != len || strncmp(button_key[i], start, len) != 0) {
 				continue;
 			}
 			placed[i] = true;
@@ -1044,7 +1066,7 @@ static void order_load(void) {
 	// nobody has decided about is better offered than hidden -- except the two
 	// below, and the grid is already full without them.
 	for (int i = 0; i < QP_BTN_COUNT; i++) {
-		if (placed[i]) {
+		if (placed[i] || !button_available(i)) {
 			continue;
 		}
 		// Crossfade, which the migration below is taking out on purpose, and the
@@ -1053,7 +1075,10 @@ static void order_load(void) {
 		// panel nobody asked to change, so they wait among the unused ones, where
 		// the settings page shows them.
 		bool waits = i == QP_BTN_DLNA || i == QP_BTN_SLEEP_MUSIC || i == QP_BTN_SLEEP_AUDIOBOOK ||
-					 i == QP_BTN_SLEEP_PODCAST || i == QP_BTN_WIFI_TRANSFER || i == QP_BTN_GAPLESS;
+					 i == QP_BTN_SLEEP_PODCAST || i == QP_BTN_WIFI_TRANSFER || i == QP_BTN_GAPLESS ||
+					 (i == QP_BTN_HOME && button_available(QP_BTN_WIFI)) || i == QP_BTN_QUEUE;
+		// ...and Home, except where the radio buttons have left the panel with
+		// room to spare: there it takes a place from the start.
 		if ((saved_version < 2 && i == QP_BTN_FADE) || waits) {
 			hidden[hidden_n++] = (uint8_t)i;
 		} else {
@@ -1172,6 +1197,10 @@ static lv_obj_t *button_widget(quickpanel_button_t which) {
 		return wifi_transfer_btn;
 	case QP_BTN_GAPLESS:
 		return gapless_btn;
+	case QP_BTN_HOME:
+		return home_btn;
+	case QP_BTN_QUEUE:
+		return queue_btn;
 	default:
 		return NULL;
 	}
@@ -1204,6 +1233,13 @@ static void order_apply(void) {
 	}
 	for (int i = 0; i < hidden_n; i++) {
 		lv_obj_t *btn = button_widget((quickpanel_button_t)hidden[i]);
+		if (btn) {
+			lv_obj_set_hidden(btn, true);
+		}
+	}
+	// The buttons this player cannot have are in neither list: out of sight.
+	for (int i = 0; i < QP_BTN_COUNT; i++) {
+		lv_obj_t *btn = button_available(i) ? NULL : button_widget((quickpanel_button_t)i);
 		if (btn) {
 			lv_obj_set_hidden(btn, true);
 		}
@@ -1386,6 +1422,10 @@ const lv_image_dsc_t *quickpanel_button_icon(quickpanel_button_t button) {
 		return &icon_wifi_transfer_quick;
 	case QP_BTN_GAPLESS:
 		return &icon_gapless_on_quick;
+	case QP_BTN_HOME:
+		return &icon_home_quick;
+	case QP_BTN_QUEUE:
+		return &icon_queue_quick;
 	default:
 		return &icon_wifi;
 	}
@@ -1475,10 +1515,22 @@ static void refresh_audio_buttons(void) {
 	circle_button_set_on(wifi_transfer_btn, wifitransfer_get_enabled());
 
 	bool high = musicsettings_high_gain();
+	const lv_image_dsc_t *gain_icon = high ? &icon_high_gain : &icon_low_gain;
+	// Darwin's gain is the card's own, three positions (darwin.h): the two-way
+	// switch means nothing there.
+	if (alsa_board_is_darwin()) {
+		static const lv_image_dsc_t *const DARWIN_GAIN_ICONS[DARWIN_GAIN_COUNT] = {
+			&icon_low_gain,
+			&icon_mid_gain,
+			&icon_high_gain,
+		};
+		gain_icon = DARWIN_GAIN_ICONS[darwin_gain()];
+		high = darwin_gain() == DARWIN_GAIN_COUNT - 1;
+	}
 	if (gain_btn) {
 		lv_obj_t *icon = lv_obj_get_child(gain_btn, 0);
 		if (icon) {
-			lv_image_set_src(icon, high ? &icon_high_gain : &icon_low_gain);
+			lv_image_set_src(icon, gain_icon);
 		}
 	}
 	circle_button_set_on(gain_btn, high);
@@ -1841,7 +1893,11 @@ static void gain_clicked_cb(lv_event_t *e) {
 		long_press_consumed = false;
 		return;
 	}
-	musicsettings_set_high_gain(!musicsettings_high_gain());
+	if (alsa_board_is_darwin()) {
+		darwin_set_gain((darwin_gain() + 1) % DARWIN_GAIN_COUNT);
+	} else {
+		musicsettings_set_high_gain(!musicsettings_high_gain());
+	}
 	toggled();
 }
 
@@ -1871,6 +1927,14 @@ static void open_page(lv_obj_t *screen) {
 }
 
 static void open_page_cb(lv_event_t *e) { open_page(lv_event_get_user_data(e)); }
+
+// The same from a tap. open_page() marks a long press as consumed so that the
+// click that follows it is dropped; after a tap there is no such click, and
+// the mark would swallow the next tap on any circle instead.
+static void page_tap_cb(lv_event_t *e) {
+	open_page(lv_event_get_user_data(e));
+	long_press_consumed = false;
+}
 
 // A bare glyph button for the transport row.
 static lv_obj_t *make_flat_button(lv_obj_t *parent, int size, lv_event_cb_t cb) {
@@ -2049,9 +2113,9 @@ void quickpanel_init(gui_config_t *cfg) {
 	lv_obj_add_event_cb(fade_btn, fade_clicked_cb, LV_EVENT_CLICKED, NULL);
 	lv_obj_add_event_cb(fade_btn, open_page_cb, LV_EVENT_LONG_PRESSED, musicsettings_fade_screen());
 
-	// Gain is the odd control: two states rather than on and off, so the glyph
-	// itself changes and the accent marks only the loud one. Low gain is not
-	// "off", it is the normal setting.
+	// Gain is the odd control: two states rather than on and off (three on
+	// Darwin, a tap going round them), so the glyph itself changes and the accent
+	// marks only the loud one. Low gain is not "off", it is the normal setting.
 	//
 	// No long press here: gain is a plain switch on the music settings page
 	// rather than a section of its own, so there is no page to shortcut to, and
@@ -2096,6 +2160,15 @@ void quickpanel_init(gui_config_t *cfg) {
 	wifi_transfer_btn = make_circle_button(row, &icon_wifi_transfer_quick);
 	lv_obj_add_event_cb(wifi_transfer_btn, wifi_transfer_clicked_cb, LV_EVENT_CLICKED, NULL);
 	lv_obj_add_event_cb(wifi_transfer_btn, open_page_cb, LV_EVENT_LONG_PRESSED, wifitransfer_screen);
+
+	// Home: a tap closes the sheet and lands on the main menu, whatever was
+	// under it. Nothing to hold, so no long press.
+	home_btn = make_circle_button(row, &icon_home_quick);
+	lv_obj_add_event_cb(home_btn, page_tap_cb, LV_EVENT_CLICKED, main_menu_screen);
+
+	// Queue: the page from wherever the sheet was pulled down.
+	queue_btn = make_circle_button(row, &icon_queue_quick);
+	lv_obj_add_event_cb(queue_btn, page_tap_cb, LV_EVENT_CLICKED, queue_screen);
 
 	gapless_btn = make_circle_button(row, &icon_gapless_off_quick);
 	lv_obj_add_event_cb(gapless_btn, gapless_clicked_cb, LV_EVENT_CLICKED, NULL);
