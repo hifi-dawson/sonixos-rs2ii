@@ -45,6 +45,7 @@ Flash HiBy's original RS2 II firmware, with the file named `rs2ii.upt`. This has
 
 - Holding the power knob for about 15 seconds cuts the power in hardware, so a frozen player can always be switched off.
 - The recovery button above doesn't need the firmware to be working, as long as a good `rs2ii.upt` is on the card.
+- A blank screen after a restart, with no response to the buttons, can be the chip's own USB boot mode, which Windows lists as `Ingenic USB BOOT DEVICE`. One player went into it with the lowest side button held through a restart, so don't hold that button as the player starts. Nothing is written to the player in this mode. Unplug the USB cable, hold the power knob for about 15 seconds to cut the power, then hold it again until the logo shows. It may take more than one try.
 
 ### Build it yourself
 
